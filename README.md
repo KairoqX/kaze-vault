@@ -87,6 +87,20 @@ Installation and service-worker behavior generally require a secure context: `ht
 
 Only non-sensitive static assets are cached: CSS, the manifest, and the app icon. Private pages, records, journals, passwords, CSRF tokens, session cookies, attachments, media, health responses, and API responses are never cached or synchronized. If the laptop is offline, the installed shell may open but private data is unavailable; use the displayed connection warning. Update KazeVault by stopping it, replacing the application files, and restarting; the service worker version changes when its cache name changes. Remove the PWA from Android's app info or home-screen menu.
 
+## Phase 7: network modes and private remote access
+
+The dashboard displays the configured mode:
+
+- `run.bat`: local-only mode, bound to `127.0.0.1`.
+- `run-lan.bat`: explicit trusted-LAN mode, bound to all interfaces. Use only with a Private-profile firewall rule and trusted Wi-Fi. HTTP LAN traffic is not encrypted.
+- `run-remote.bat`: private-remote mode, still bound to `127.0.0.1` and intended to sit behind a private HTTPS proxy such as Tailscale Serve.
+
+For remote access without public exposure, install Tailscale independently on the laptop and phone, sign both into the same private tailnet, start KazeVault with `run-remote.bat`, and configure Tailscale Serve according to its current official documentation to proxy HTTPS to `http://127.0.0.1:8765`. Do not use router port forwarding. WireGuard is another suitable private-network option: configure it independently, restrict peer access to the KazeVault port, and use HTTPS if traffic crosses an untrusted network. KazeVault does not create tunnels, manage private keys, or configure external network settings.
+
+Set `KAZEVAULT_PUBLIC_URL` only to a URL you intentionally want displayed in the dashboard. Only HTTPS URLs and localhost URLs are displayed. Set `KAZEVAULT_ALLOWED_HOSTS` to a comma-separated list of trusted proxy hostnames when using a reverse proxy. KazeVault does not trust arbitrary forwarded headers. Set `KAZEVAULT_HTTPS=1` when the browser-facing connection is HTTPS so secure cookies are enabled; do not set it for ordinary HTTP LAN access.
+
+If a device cannot connect, verify the server is running in the intended mode, the address and port are correct, Windows Firewall permits only the intended Private network, both devices can reach each other, and any HTTPS certificate is trusted by the device. A failed connection must not be treated as an empty database; the UI shows a server-unavailable warning instead.
+
 ## Optional startup
 
 Automatic startup is intentionally not configured. If you later choose it, create a Windows Task Scheduler task that runs `run.bat` at logon, with the task set to run only when you choose. To disable it, remove that task. Do not use LAN mode for startup unless you explicitly want LAN exposure.

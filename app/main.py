@@ -1,4 +1,4 @@
-import os, secrets, shutil, sqlite3, zipfile, tempfile, time, hmac, re, json, hashlib, uuid
+import os, secrets, shutil, sqlite3, zipfile, tempfile, time, hmac, re, json, hashlib, uuid, ipaddress
 from urllib.parse import quote
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -37,7 +37,19 @@ class PasswordEntry(Base):
 Base.metadata.create_all(engine)
 
 SESSION_SECRET=os.getenv('KAZEVAULT_SESSION_SECRET') or secrets.token_urlsafe(48)
+NETWORK_MODE=os.getenv('KAZEVAULT_MODE','local').lower(); NETWORK_MODE=NETWORK_MODE if NETWORK_MODE in {'local','lan','remote'} else 'local'
+ALLOWED_HOSTS={x.strip().lower() for x in os.getenv('KAZEVAULT_ALLOWED_HOSTS','').split(',') if x.strip()} | {'testserver'}
 app=FastAPI(title='KazeVault'); app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, max_age=28800, same_site='lax', https_only=os.getenv('KAZEVAULT_HTTPS','0')=='1')
+@app.middleware('http')
+async def host_guard(request: Request, call_next):
+    host=request.headers.get('host','').split(':',1)[0].strip('[]').lower()
+    valid=host in {'localhost','127.0.0.1','::1'} or host in ALLOWED_HOSTS or (NETWORK_MODE=='remote' and (host.endswith('.ts.net') or host.endswith('.ts.net.')))
+    if not valid:
+        try:
+            ip=ipaddress.ip_address(host); valid=ip.is_loopback or ip.is_private or ip in ipaddress.ip_network('100.64.0.0/10')
+        except ValueError: valid=False
+    if not valid: return JSONResponse({'detail':'Unrecognized Host header. Configure KAZEVAULT_ALLOWED_HOSTS for a trusted hostname.'},status_code=400)
+    return await call_next(request)
 templates=Jinja2Templates(directory=str(ROOT/'app/templates'))
 app.mount('/static', StaticFiles(directory=str(ROOT/'app/static')), name='static')
 @app.get('/manifest.webmanifest')
@@ -84,7 +96,11 @@ def login_allowed(request: Request):
     recent.append(now)
 def setup_needed():
     with db() as s: return s.query(User).count()==0
-def ctx(request, **kw): return {'request':request, 'setup_needed':setup_needed(), 'csrf_token':csrf(request), 'flash':request.session.pop('flash',None), **kw}
+def network_info():
+    configured=os.getenv('KAZEVAULT_PUBLIC_URL','').strip().rstrip('/')
+    safe=configured.startswith('https://') or configured.startswith('http://localhost') or configured.startswith('http://127.0.0.1')
+    return {'mode':NETWORK_MODE,'mode_label':{'local':'Local-only','lan':'Trusted LAN','remote':'Private remote proxy'}[NETWORK_MODE],'public_url':configured if safe else None,'https':os.getenv('KAZEVAULT_HTTPS','0')=='1'}
+def ctx(request, **kw): return {'request':request, 'setup_needed':setup_needed(), 'csrf_token':csrf(request), 'flash':request.session.pop('flash',None), 'network':network_info(), **kw}
 
 def _safe_zip_name(name):
     p=Path(name.replace('\\','/'))

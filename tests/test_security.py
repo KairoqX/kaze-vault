@@ -109,3 +109,13 @@ def test_pwa_manifest_and_safe_service_worker(app_client):
     data=manifest.json(); assert data['display']=='standalone'; assert data['start_url']=='/'
     worker=client.get('/sw.js'); assert worker.status_code==200
     assert '/static/' in worker.text and '/health' not in worker.text and 'passwords' not in worker.text
+
+def test_network_mode_and_host_guard(app_client, monkeypatch):
+    module, client=app_client
+    assert module.network_info()['mode']=='local'
+    assert client.get('/health',headers={'host':'evil.example'}).status_code==400
+    assert client.get('/health',headers={'host':'192.168.1.20:8765'}).status_code==200
+    monkeypatch.setenv('KAZEVAULT_MODE','invalid-public-mode')
+    import importlib
+    reloaded=importlib.reload(module)
+    assert reloaded.network_info()['mode']=='local'
