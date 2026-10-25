@@ -1,132 +1,200 @@
 # KazeVault
 
-KazeVault is a lightweight, self-hosted personal database for notes, journal entries, knowledge, records, attachments, search, and local backups. It uses FastAPI, SQLite, SQLAlchemy, and Argon2id. It is designed for a trusted home network and is not a security audit or a promise of complete security.
+KazeVault is a private, self-hosted Windows vault for records, notes, journals, knowledge entries, files, media, encrypted passwords, verified backups, and optional local AI chat. It uses FastAPI, SQLite, SQLAlchemy, and Argon2id. It is intended for personal or trusted-home use, not public internet exposure or enterprise security.
 
-## Install on Windows
+## Features
 
-Open PowerShell and run:
+- Dashboard, records, notes, journals, knowledge base, categories, favorites, and metadata search.
+- File Explorer with database-backed folders: All files, Videos, Images, Audio, Documents, Archives, Code, and Other.
+- Automatic file grouping without moving or renaming stored files.
+- Media previews, native audio/video playback, downloads, range requests, and fixed responsive thumbnails.
+- Separate Password Manager using scrypt and AES-256-GCM.
+- Verified ZIP backups and validated restore with automatic pre-restore backup.
+- Read-only system diagnostics.
+- Android/Chromium PWA support.
+- Local, trusted-LAN, and private Tailscale remote modes.
+- Optional local AI Hub using llama-server.exe and GGUF models.
+- Argon2id passwords, signed sessions, CSRF protection, login throttling, host validation, and authenticated private routes.
 
-```powershell
+## Installation
+
+Requirements: Windows 10/11, Python 3.11+, a writable project directory, and a modern browser.
+
+~~~powershell
 cd F:\KazeVault
 py -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
-```
+~~~
 
-Start locally with `run.bat`, or:
+Do not delete data, backups, or model directories during updates.
 
-```powershell
-.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8765
-```
+## Local use
 
-Open http://127.0.0.1:8765 and create the administrator account on first launch. There is no default password. Stop with Ctrl+C or `stop.bat`.
+~~~powershell
+cd F:\KazeVault
+.\run.bat
+~~~
 
-## LAN access
+Open http://127.0.0.1:8765 and create the administrator account on first launch. There is no default password. Stop with Ctrl+C or .\stop.bat. Local mode binds only to 127.0.0.1.
 
-LAN mode is opt-in. Run `run-lan.bat`, then find the laptop's private address with:
+## LAN phone access
 
-```powershell
+LAN mode uses unencrypted HTTP and is for trusted Wi-Fi only:
+
+~~~powershell
+cd F:\KazeVault
+.\run-lan.bat
 ipconfig
-```
+~~~
 
-Use the IPv4 address from the Wi-Fi adapter, for example `http://192.168.1.25:8765`. Allow inbound TCP 8765 only on the Private profile, ideally restricted to your local subnet. In an Administrator PowerShell window:
+Use the connected Wi-Fi adapter IPv4 address, such as http://10.126.75.52:8765, from the phone. Both devices must be on the same Wi-Fi. If required, allow only TCP 8765 on the Private firewall profile:
 
-```powershell
+~~~powershell
 New-NetFirewallRule -DisplayName "KazeVault LAN" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8765 -Profile Private -RemoteAddress LocalSubnet
-```
+~~~
 
-Do not disable Windows Firewall or configure router port forwarding. Plain HTTP does not encrypt traffic; use LAN mode only on a trusted network. For stronger protection, place KazeVault behind HTTPS with a properly managed certificate and review the threat model first.
+Never disable the firewall or configure router port forwarding.
 
-## Data and backups
+## Private remote access with Tailscale
 
-Persistent data is under `data\`, attachments under `data\attachments\`, and ZIP backups under `backups\`. Use the Backups page to create a consistent database-plus-attachments archive. A same-SSD backup does not protect against SSD failure; copy backup ZIPs to a separate physical drive and periodically test that they open.
+Install Tailscale on the Windows host and phone, sign into the same tailnet, and check:
 
-KazeVault hashes passwords with Argon2id, but password hashing does not encrypt the SQLite database. Protect the drive and backup copies with BitLocker or another full-disk encryption solution. Do not expose the app to the public internet.
+~~~powershell
+tailscale status
+~~~
 
-## Phase 2 security hardening
+Start KazeVault and configure Serve:
 
-- Passwords use Argon2id; successful login clears the prior session state before establishing the authenticated session.
-- Sessions are signed, unpredictable cookies with an eight-hour expiration. `KAZEVAULT_HTTPS=1` enables the Secure cookie flag when running behind HTTPS; leave it unset for ordinary localhost/LAN HTTP.
-- All state-changing forms include a server-validated CSRF token. Missing or invalid tokens are rejected with HTTP 403.
-- Failed logins are throttled per client address after five attempts in five minutes. This is intentionally temporary rather than a permanent account lockout.
-- Uploads use generated storage names, reject path-like/control-character filenames, enforce a 25 MB limit and allowlist, and downloads send `nosniff` and restrictive content-security headers.
-- Protected pages and attachment routes enforce authentication server-side. Queries use SQLAlchemy parameters.
+~~~powershell
+cd F:\KazeVault
+.\run-remote.bat
+tailscale serve --https=443 http://127.0.0.1:8765
+tailscale serve status
+~~~
 
-## Phase 3 backup and recovery
+Open the HTTPS hostname shown by tailscale serve status, for example https://your-machine.your-tailnet.ts.net/. Tailscale must be enabled on the phone. If Tailscale requests permission to enable Serve, approve its account page. Do not bypass TLS warnings or expose the URL publicly.
 
-Backups are versioned ZIP archives stored in `backups\`. Each contains a SQLite backup, `manifest.json`, and an attachment inventory with sizes and SHA-256 hashes. The Backups page verifies archive paths, the manifest, SQLite integrity, attachment presence, and attachment hashes. Temporary files are atomically renamed into place, so an interrupted backup does not replace an older backup.
+For another trusted proxy, configure trusted hosts explicitly:
 
-The page supports creating, verifying, downloading, and deleting backups. The only verified backup cannot be deleted. Restore requires authentication, a valid archive, and typing `RESTORE`. Before replacement, KazeVault creates a verified `pre-restore-...zip` backup. The database and attachments are staged and validated before the old paths are moved aside. If replacement fails, the old database and attachments are restored where possible. Restart KazeVault after a successful restore so all application connections are reopened against the restored database.
+~~~powershell
+$env:KAZEVAULT_ALLOWED_HOSTS='your-machine.your-tailnet.ts.net'
+$env:KAZEVAULT_PUBLIC_URL='https://your-machine.your-tailnet.ts.net'
+~~~
 
-Older unversioned ZIPs from the first prototype are not treated as restorable because they have no manifest or attachment hashes; keep them as legacy archives and verify them manually before relying on them. Local backups do not protect against SSD failure, theft, or ransomware. Copy verified ZIPs to a separate physical drive and periodically test them.
+## Android PWA
 
-For drive protection on supported Windows editions, open **Settings → Privacy & security → Device encryption** or search for **Manage BitLocker**, then enable encryption for the data drive containing KazeVault. Save the recovery key separately. BitLocker protects the drive at rest; it does not protect data while the server is running.
+Open the HTTPS remote URL in Android Chrome, choose the browser menu, then Install app or Add to Home screen. The Windows host must remain online. Only non-sensitive static assets are cached; private pages, passwords, cookies, CSRF tokens, attachments, media, and API responses are not cached.
 
-## Phase 4: mobile, password vault, and files
+## Files, folders, and media
 
-The interface is mobile-first, has a viewport-safe layout, touch-sized controls, and a responsive file grid. Use `/files` or the Files navigation item from Android. The LAN address must be reachable from the same trusted Wi-Fi network; Android browser rendering and media codec support vary by device.
+Data is stored here:
 
-The Passwords section is separate from the KazeVault administrator password. On first use, initialize it with a separate master password of at least 12 characters. Website passwords and private notes use AES-256-GCM authenticated encryption. The encryption key is derived with scrypt (N=16384, r=8, p=1) from the master password and a unique stored salt, then held only in server memory while unlocked. The vault auto-locks after 15 minutes of inactivity by default; configure `KAZEVAULT_VAULT_IDLE_SECONDS` if needed. Forgetting the master password means encrypted credentials cannot be recovered. The password generator uses the operating system cryptographic random source.
+~~~text
+data\                   SQLite database and application data
+data\attachments\       Stored uploaded files
+data\models\            Optional AI model directory
+backups\                Verified ZIP backups
+~~~
 
-Files are stored under `data\attachments\`, never as SQLite BLOBs. Uploads stream in 1 MB chunks, accept ordinary and unknown file types, enforce `KAZEVAULT_MAX_UPLOAD_MB` (default 512 MB), reject unsafe filenames, and clean up interrupted temporary uploads. Archives are stored unchanged and never extracted. Images, audio, and video may open inline when the browser supports the media type; unsupported codecs remain downloadable. SVG, HTML, scripts, and archives are not treated as trusted application content.
+Each attachment has a database folder_id. Standard folders are created automatically: Videos, Images, Audio, Documents, Archives, Code, and Other. The All files view shows everything. New files are classified using MIME type and extension; their physical stored names remain unchanged. Archives are stored unchanged and never extracted.
 
-Encrypted credential fields remain encrypted inside backups. Restoring a backup does not recover the vault if its master password is forgotten. Password secrets are never included in ordinary listings or backup manifests.
+The default upload limit is 512 MB:
 
-## Phase 5: explorer, media, search, and diagnostics
+~~~powershell
+$env:KAZEVAULT_MAX_UPLOAD_MB='1024'
+~~~
 
-Files now have a searchable/sortable explorer at `/files`, a dedicated media library at `/media`, storage usage summaries, lazy image loading, native audio/video controls, and byte-range responses for efficient media seeking. Browser codec support is not guaranteed; unsupported media remains downloadable. Uploaded archives are stored unchanged and never extracted.
+Browser codec support varies. Unsupported media remains downloadable. Thumbnails use fixed preview frames and may crop content.
 
-`/search` searches records, notes, journal entries, knowledge entries, and file metadata. It does not search file contents or password-vault secrets. `/system` is administrator-only and provides read-only SQLite integrity, free-space, storage-usage, backup-status, and missing/orphaned attachment checks. It does not automatically repair or delete anything.
+## Password Manager
 
-Files are organized into persistent database folders automatically: All files, Videos, Images, Audio, Documents, Archives, Code, and Other. Each attachment stores its `folder_id`, and the Files page behaves like an explorer: open a folder to view its contents. Grouping uses the detected content type and filename extension, and does not move or rename the underlying stored attachment, so existing files and backup references remain safe. Multi-file bulk operations and automatic thumbnail generation are not enabled yet. The application still requires a restart after source updates and after restores. Mobile layouts were checked through automated route/template tests and responsive CSS; no physical Android device test was performed.
+Passwords use a separate master password of at least 12 characters. Secrets use AES-256-GCM, with a key derived by scrypt and held in server memory only while unlocked. The default idle lock is 15 minutes:
 
-## Phase 6: Android PWA installation
+~~~powershell
+$env:KAZEVAULT_VAULT_IDLE_SECONDS='1800'
+~~~
 
-KazeVault includes a web app manifest and a minimal service worker. On Android Chrome or another supported Chromium browser, open KazeVault, use the browser menu, and choose **Install app** or **Add to Home screen**. The app remains dependent on the laptop server for all private data.
+Forgetting the master password means encrypted secrets cannot be recovered. Secrets are not included in ordinary listings, search results, or backup manifests.
 
-Installation and service-worker behavior generally require a secure context: `https://...` or `http://localhost`. Ordinary `http://10.x.x.x:8765` LAN access is not a secure context for these features. The safest simple LAN approach is to keep KazeVault local-only unless you already operate a trusted HTTPS reverse proxy with a certificate trusted by your devices. KazeVault does not generate certificates, expose ports publicly, or configure router forwarding.
+## Backups and restore
 
-Only non-sensitive static assets are cached: CSS, the manifest, and the app icon. Private pages, records, journals, passwords, CSRF tokens, session cookies, attachments, media, health responses, and API responses are never cached or synchronized. If the laptop is offline, the installed shell may open but private data is unavailable; use the displayed connection warning. Update KazeVault by stopping it, replacing the application files, and restarting; the service worker version changes when its cache name changes. Remove the PWA from Android's app info or home-screen menu.
+Use Backups to create, verify, download, delete, and restore archives. Archives contain a consistent SQLite copy, manifest.json, and attachment paths, sizes, and SHA-256 hashes. Restore requires authentication and typing RESTORE. KazeVault creates a verified pre-restore backup, stages and validates data, and attempts rollback on failure. Restart after successful restore.
 
-## Phase 7: network modes and private remote access
+The only verified backup cannot be deleted. Copy verified ZIPs to another physical drive or encrypted storage. Same-disk backups do not protect against disk failure, theft, or ransomware. Use BitLocker or Windows Device Encryption.
 
-The dashboard displays the configured mode:
+Dedicated model binaries in data\models are excluded from ordinary backups. AI metadata and conversations in SQLite are included. GGUF files uploaded as ordinary attachments follow normal attachment backup behavior.
 
-- `run.bat`: local-only mode, bound to `127.0.0.1`.
-- `run-lan.bat`: explicit trusted-LAN mode, bound to all interfaces. Use only with a Private-profile firewall rule and trusted Wi-Fi. HTTP LAN traffic is not encrypted.
-- `run-remote.bat`: private-remote mode, still bound to `127.0.0.1` and intended to sit behind a private HTTPS proxy such as Tailscale Serve.
+## Private AI Hub
 
-For remote access without public exposure, install Tailscale independently on the laptop and phone, sign both into the same private tailnet, start KazeVault with `run-remote.bat`, and configure Tailscale Serve according to its current official documentation to proxy HTTPS to `http://127.0.0.1:8765`. Do not use router port forwarding. WireGuard is another suitable private-network option: configure it independently, restrict peer access to the KazeVault port, and use HTTPS if traffic crosses an untrusted network. KazeVault does not create tunnels, manage private keys, or configure external network settings.
+AI Chat is optional and never sends prompts to an external provider. Configure an existing local llama-server.exe before starting:
 
-Set `KAZEVAULT_PUBLIC_URL` only to a URL you intentionally want displayed in the dashboard. Only HTTPS URLs and localhost URLs are displayed. Set `KAZEVAULT_ALLOWED_HOSTS` to a comma-separated list of trusted proxy hostnames when using a reverse proxy. KazeVault does not trust arbitrary forwarded headers. Set `KAZEVAULT_HTTPS=1` when the browser-facing connection is HTTPS so secure cookies are enabled; do not set it for ordinary HTTP LAN access.
-
-If a device cannot connect, verify the server is running in the intended mode, the address and port are correct, Windows Firewall permits only the intended Private network, both devices can reach each other, and any HTTPS certificate is trusted by the device. A failed connection must not be treated as an empty database; the UI shows a server-unavailable warning instead.
-
-## Phase 8: private AI hub
-
-The authenticated `/ai` page is an optional local AI interface. It discovers only valid `.gguf` files in the approved `KAZEVAULT_AI_MODEL_DIR` directory (default `data\models`) and existing KazeVault GGUF attachments. It does not download, execute, or scan arbitrary system files. Model metadata is stored in SQLite; model binaries in the dedicated model directory are not copied into ordinary KazeVault backups. GGUF files uploaded as ordinary attachments follow the existing attachment backup policy.
-
-KazeVault uses an existing `llama-server.exe` as an optional loopback-only backend. Configure it before starting the server:
-
-```powershell
-$env:KAZEVAULT_LLAMA_SERVER='C:\path\to\llama-server.exe'
+~~~powershell
+$env:KAZEVAULT_LLAMA_SERVER='F:\llama\llama-server.exe'
 $env:KAZEVAULT_AI_MODEL_DIR='F:\KazeVault\data\models'
 $env:KAZEVAULT_LLAMA_ENDPOINT='http://127.0.0.1:8081'
 $env:KAZEVAULT_AI_CONTEXT='2048'
 $env:KAZEVAULT_AI_MAX_TOKENS='512'
-```
+& 'F:\llama\llama-server.exe' --version
+~~~
 
-The AI backend is never exposed to LAN, Tailscale, or browser clients directly. Authenticated KazeVault endpoints proxy chat requests, enforce CSRF for operations, and support one active model at a time. Loading a model is resource-intensive; file size is only an estimate, not actual RAM usage, and GPU acceleration is not assumed. Android and other devices use the same private HTTPS KazeVault URL; they do not run the model locally. Stop or unload the model from the AI Hub before shutting down the host. Prompt and response text is not sent to external providers and is not automatically populated with vault records, attachments, passwords, or secrets.
+The included remote launcher already uses F:\llama\llama-server.exe for this installation. Put compatible .gguf files in F:\KazeVault\data\models or upload them through Files. Only valid GGUF files in approved locations are listed; there are no automatic downloads or arbitrary system scans.
 
-If `llama-server.exe` is missing, the AI Hub remains usable for setup instructions and reports the configuration error instead of downloading an executable. Unsupported GGUF files, path traversal, non-loopback endpoints, backend startup failures, timeouts, and crashed processes are surfaced as errors. The current implementation does not provide automatic model downloads, GPU configuration, arbitrary folder import, or a claim that a model is loaded until the backend health endpoint confirms it.
+Open AI Chat, select a model, choose Load, wait for backend health confirmation, and then chat. Only one model is active at a time. Performance depends on model size, context, CPU, memory, and the llama.cpp build; GPU acceleration is not assumed. The inference endpoint remains loopback-only.
 
-## Optional startup
+Conversations are stored in SQLite. Removing one conversation deletes only it; Clear history removes all AI conversations. Vault records, files, password secrets, session tokens, and private keys are never automatically inserted into prompts.
 
-Automatic startup is intentionally not configured. If you later choose it, create a Windows Task Scheduler task that runs `run.bat` at logon, with the task set to run only when you choose. To disable it, remove that task. Do not use LAN mode for startup unless you explicitly want LAN exposure.
+## Security
+
+Administrator passwords use Argon2id. Sessions are signed and expire after eight hours. Set KAZEVAULT_HTTPS=1 for HTTPS secure cookies. State-changing forms and AI operations require CSRF tokens. Failed logins are temporarily throttled. Private routes require authentication. Host headers are validated. Upload filenames reject traversal and control characters, stored names are random, and downloads use nosniff and restrictive content-security headers.
+
+These controls do not protect data from someone who controls the Windows account, running process, disk, or backup files.
+
+## Configuration
+
+| Variable | Purpose | Default |
+|---|---|---|
+| KAZEVAULT_DATA | Database/data root | data |
+| KAZEVAULT_MODE | local, lan, or remote | local |
+| KAZEVAULT_HTTPS | Secure-cookie mode | 0 |
+| KAZEVAULT_ALLOWED_HOSTS | Trusted hostnames | empty plus testserver |
+| KAZEVAULT_PUBLIC_URL | Safe dashboard URL | empty |
+| KAZEVAULT_MAX_UPLOAD_MB | Upload limit | 512 |
+| KAZEVAULT_VAULT_IDLE_SECONDS | Password idle timeout | 900 |
+| KAZEVAULT_AI_MODEL_DIR | Approved GGUF directory | data\models |
+| KAZEVAULT_LLAMA_SERVER | Inference executable | unset |
+| KAZEVAULT_LLAMA_ENDPOINT | Loopback inference URL | http://127.0.0.1:8081 |
+| KAZEVAULT_AI_CONTEXT | Context setting | 2048 |
+| KAZEVAULT_AI_MAX_TOKENS | Generation setting | 512 |
+
+Never put passwords or private keys in source code or frontend JavaScript.
 
 ## Troubleshooting
 
-- Port occupied: change `8765` consistently in the batch file and URL, or find the process with `netstat -ano | findstr :8765`.
-- Cannot open database: check that the account has write access to `F:\KazeVault\data` and that no backup tool is locking it.
-- Upload rejected: only the documented extensions and 25 MB maximum are accepted; uploaded HTML and executable files are not accepted.
-- Updating: stop the server, back up `data` and `backups`, replace application source files, reinstall requirements, and start again. Never delete the `data` directory during an update.
+- Setup 422: open the root URL; setup requires form data and redirects if an administrator exists.
+- LAN failure: check same Wi-Fi, IPv4 address, run-lan.bat, and Private firewall rules. Guest networks may isolate devices.
+- Remote timeout: check tailscale status, Serve status, run-remote.bat, and Tailscale on the phone.
+- TLS error: use the exact Serve HTTPS hostname and check Tailscale certificate status.
+- No AI models: confirm .gguf extension, valid GGUF header, and approved directory.
+- AI load failure: verify llama-server.exe with --version, port 8081, backend arguments, and available memory.
+- Media failure: try Download file or a local player; browser codecs vary.
+- Backup failure: review the verification message, check free space, never delete data, and restart after restore.
+- Port conflict:
+
+~~~powershell
+netstat -ano | findstr :8765
+~~~
+
+Stop only a process you recognize as KazeVault, or change the port consistently in launcher, proxy, firewall rule, and URL.
+
+## Tests and safe updates
+
+Run:
+
+~~~powershell
+.venv\Scripts\python.exe -m pytest -q
+~~~
+
+Tests cover authentication, CSRF, throttling, uploads, backups, restore validation, password encryption, media ranges, folders, PWA routes, host validation, AI validation, missing backend behavior, and conversation deletion. Tests use temporary databases and do not download large models. No formatter, linter, or type-check command is configured.
+
+To update safely: stop KazeVault, create or verify a backup, replace application files without deleting data/backups/models, install changed requirements, run tests, restart, and hard-refresh browsers. Never expose KazeVault directly to the public internet or reset the database to fix an error.
 
