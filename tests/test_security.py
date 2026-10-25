@@ -90,3 +90,15 @@ def test_password_vault_encryption_lock_and_generator(app_client):
     client.post('/passwords/lock', data={'csrf_token':csrf}, follow_redirects=False)
     assert client.post(f'/passwords/{pid}/reveal', data={'csrf_token':csrf}).status_code==403
     generated=client.get('/passwords/generate?length=32').json()['password']; assert len(generated)==32
+
+def test_unified_search_media_range_and_system_report(app_client):
+    _, client=app_client
+    setup_user(client); login(client)
+    csrf=token(client.get('/records/new').text)
+    client.post('/records/save', data={'csrf_token':csrf,'title':'Searchable note','kind':'note','content':'needle'}, follow_redirects=False)
+    assert 'Searchable note' in client.get('/search?q=needle').text
+    csrf=token(client.get('/documents').text)
+    client.post('/documents/upload', data={'csrf_token':csrf}, files={'file':('clip.mp4',b'0123456789','video/mp4')}, follow_redirects=False)
+    media=client.get('/media'); assert media.status_code==200 and 'clip.mp4' in media.text
+    download=client.get('/documents/1/download',headers={'Range':'bytes=0-3'}); assert download.status_code in (200,206)
+    assert client.get('/system').status_code==200

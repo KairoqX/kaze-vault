@@ -71,6 +71,14 @@ Files are stored under `data\attachments\`, never as SQLite BLOBs. Uploads strea
 
 Encrypted credential fields remain encrypted inside backups. Restoring a backup does not recover the vault if its master password is forgotten. Password secrets are never included in ordinary listings or backup manifests.
 
+## Phase 5: explorer, media, search, and diagnostics
+
+Files now have a searchable/sortable explorer at `/files`, a dedicated media library at `/media`, storage usage summaries, lazy image loading, native audio/video controls, and byte-range responses for efficient media seeking. Browser codec support is not guaranteed; unsupported media remains downloadable. Uploaded archives are stored unchanged and never extracted.
+
+`/search` searches records, notes, journal entries, knowledge entries, and file metadata. It does not search file contents or password-vault secrets. `/system` is administrator-only and provides read-only SQLite integrity, free-space, storage-usage, backup-status, and missing/orphaned attachment checks. It does not automatically repair or delete anything.
+
+Multi-file bulk operations, virtual folders, and automatic thumbnail generation are intentionally not enabled yet. Use the existing upload control for individual files and the explicit delete controls for cleanup. The application still requires a restart after source updates and after restores. Mobile layouts were checked through automated route/template tests and responsive CSS; no physical Android device test was performed.
+
 ## Optional startup
 
 Automatic startup is intentionally not configured. If you later choose it, create a Windows Task Scheduler task that runs `run.bat` at logon, with the task set to run only when you choose. To disable it, remove that task. Do not use LAN mode for startup unless you explicitly want LAN exposure.

@@ -213,6 +213,11 @@ def documents(request: Request, q: str='', sort: str='date'):
     with db() as s: query=s.query(Attachment); items=query.filter(Attachment.original_name.ilike(f'%{q}%')).all() if q else query.all()
     key={'name':lambda x:x.original_name.lower(),'size':lambda x:x.size,'type':lambda x:x.content_type,'date':lambda x:x.created_at}.get(sort,lambda x:x.created_at); items=sorted(items,key=key,reverse=sort in ('size','date'))
     return templates.TemplateResponse('documents.html',ctx(request,items=items,error=None,q=q,sort=sort,usage=sum(x.size for x in items)))
+@app.get('/media',response_class=HTMLResponse)
+def media(request: Request, q: str='', page: int=1):
+    require(request); page=max(1,page)
+    with db() as s: items=s.query(Attachment).filter(Attachment.content_type.like('image/%')|Attachment.content_type.like('audio/%')|Attachment.content_type.like('video/%')).filter(Attachment.original_name.ilike(f'%{q}%')).order_by(Attachment.created_at.desc()).offset((page-1)*24).limit(25).all()
+    return templates.TemplateResponse('media.html',ctx(request,items=items[:24],has_next=len(items)>24,q=q,page=page))
 @app.post('/documents/upload')
 async def upload(request:Request,file:UploadFile=File(...),category:str=Form(''), _: None=Depends(csrf_protect)):
     require(request); suffix=Path(file.filename or '').suffix.lower().lstrip('.'); original=file.filename or ''
@@ -333,6 +338,33 @@ def password_generate(request: Request,length:int=20,upper:bool=True,lower:bool=
     alphabet=''.join(groups); value=[secrets.choice(g) for g in groups]
     value += [secrets.choice(alphabet) for _ in range(length-len(value))]; secrets.SystemRandom().shuffle(value)
     return {'password':''.join(value)}
+
+@app.get('/search',response_class=HTMLResponse)
+def unified_search(request: Request,q: str='',kind: str='',category: str='',favorite: bool=False,page: int=1):
+    require(request); page=max(1,page); results=[]
+    with db() as s:
+        query=s.query(Record)
+        if kind=='file': query=query.filter(False)
+        if q: like=f'%{q}%'; query=query.filter(or_(Record.title.ilike(like),Record.content.ilike(like),Record.tags.ilike(like),Record.category.ilike(like)))
+        if kind: query=query.filter(Record.kind==kind)
+        if category: query=query.filter(Record.category==category)
+        if favorite: query=query.filter(Record.favorite.is_(True))
+        for r in query.order_by(Record.updated_at.desc()).all(): results.append({'type':r.kind,'title':r.title,'meta':r.category or '','url':f'/records/{r.id}/edit','date':r.updated_at})
+        files=s.query(Attachment).filter(Attachment.original_name.ilike(f'%{q}%') if q else True).filter(Attachment.category==category if category else True).all() if kind in ('','file') else []
+        for f in files: results.append({'type':'file','title':f.original_name,'meta':f.category or f.content_type,'url':f'/documents/{f.id}/download','date':f.created_at})
+    results.sort(key=lambda x:x['date'],reverse=True); start=(page-1)*20
+    return templates.TemplateResponse('search.html',ctx(request,results=results[start:start+20],has_next=len(results)>start+20,q=q,kind=kind,category=category,favorite=favorite,page=page))
+
+@app.get('/system',response_class=HTMLResponse)
+def system_status(request: Request):
+    require(request); integrity='unknown'; db_error=None
+    try:
+        c=sqlite3.connect(DB); integrity=c.execute('PRAGMA integrity_check').fetchone()[0]; c.close()
+    except Exception as e: db_error=str(e)
+    disk=shutil.disk_usage(DATA); attach_files={p.name for p in ATTACH.iterdir() if p.is_file()};
+    with db() as s: metadata={a.stored_name for a in s.query(Attachment).all()}
+    missing=sorted(metadata-attach_files); orphaned=sorted(attach_files-metadata); backups=[(p,backup_summary(p)) for p in BACKUPS.glob('*.zip')]; verified=[(p,s) for p,s in backups if s['ok']]
+    return templates.TemplateResponse('system.html',ctx(request,integrity=integrity,db_error=db_error,disk=disk,db_size=DB.stat().st_size if DB.exists() else 0,attachment_size=sum(p.stat().st_size for p in ATTACH.iterdir() if p.is_file()),missing=missing,orphaned=orphaned,last_verified=max(verified,key=lambda x:x[0].stat().st_mtime)[0].name if verified else 'None'))
 
 @app.post('/backup')
 def backup(request: Request, _: None=Depends(csrf_protect)):
