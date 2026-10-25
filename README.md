@@ -2,6 +2,19 @@
 
 KazeVault is a private, self-hosted Windows vault for records, notes, journals, knowledge entries, files, media, encrypted passwords, verified backups, and optional local AI chat. It uses FastAPI, SQLite, SQLAlchemy, and Argon2id. It is intended for personal or trusted-home use, not public internet exposure or enterprise security.
 
+
+## Preview
+
+### Dashboard
+![KazeVault Dashboard](screenshots/dashboard.png)
+
+### File Explorer
+![KazeVault File Explorer](screenshots/files.png)
+
+### AI Chat
+![KazeVault Password Manager](screenshots/ai.png)
+
+
 ## Features
 
 - Dashboard, records, notes, journals, knowledge base, categories, favorites, and metadata search.
