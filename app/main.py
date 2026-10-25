@@ -1,5 +1,5 @@
-import os, secrets, shutil, sqlite3, zipfile, tempfile, time, hmac, re, json, hashlib, uuid, ipaddress
-from urllib.parse import quote
+import os, secrets, shutil, sqlite3, zipfile, tempfile, time, hmac, re, json, hashlib, uuid, ipaddress, subprocess, threading, asyncio, queue
+from urllib.parse import quote, urlparse
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSON
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
-from sqlalchemy import create_engine, String, Text, Boolean, DateTime, ForeignKey, or_, func
+from sqlalchemy import create_engine, String, Text, Boolean, DateTime, ForeignKey, or_, func, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker, Session
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
@@ -28,13 +28,25 @@ class User(Base):
     __tablename__='users'; id: Mapped[int]=mapped_column(primary_key=True); username: Mapped[str]=mapped_column(String(80), unique=True); password_hash: Mapped[str]=mapped_column(String(255)); created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
 class Record(Base):
     __tablename__='records'; id: Mapped[int]=mapped_column(primary_key=True); kind: Mapped[str]=mapped_column(String(20), default='record'); title: Mapped[str]=mapped_column(String(200)); content: Mapped[str]=mapped_column(Text, default=''); category: Mapped[str]=mapped_column(String(80), default=''); tags: Mapped[str]=mapped_column(String(500), default=''); favorite: Mapped[bool]=mapped_column(Boolean, default=False); entry_date: Mapped[str]=mapped_column(String(20), nullable=True); created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow); updated_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+class Folder(Base):
+    __tablename__='folders'; id: Mapped[int]=mapped_column(primary_key=True); name: Mapped[str]=mapped_column(String(120)); system_key: Mapped[str]=mapped_column(String(40), unique=True); parent_id: Mapped[int]=mapped_column(ForeignKey('folders.id'), nullable=True); created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
 class Attachment(Base):
-    __tablename__='attachments'; id: Mapped[int]=mapped_column(primary_key=True); stored_name: Mapped[str]=mapped_column(String(100), unique=True); original_name: Mapped[str]=mapped_column(String(255)); content_type: Mapped[str]=mapped_column(String(100), default='application/octet-stream'); size: Mapped[int]=mapped_column(default=0); category: Mapped[str]=mapped_column(String(80), default=''); created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
+    __tablename__='attachments'; id: Mapped[int]=mapped_column(primary_key=True); stored_name: Mapped[str]=mapped_column(String(100), unique=True); original_name: Mapped[str]=mapped_column(String(255)); content_type: Mapped[str]=mapped_column(String(100), default='application/octet-stream'); size: Mapped[int]=mapped_column(default=0); category: Mapped[str]=mapped_column(String(80), default=''); folder_id: Mapped[int]=mapped_column(ForeignKey('folders.id'), nullable=True, index=True); created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
 class Vault(Base):
     __tablename__='password_vault'; id: Mapped[int]=mapped_column(primary_key=True); salt: Mapped[bytes]=mapped_column(); verifier: Mapped[bytes]=mapped_column(); created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
 class PasswordEntry(Base):
     __tablename__='password_entries'; id: Mapped[int]=mapped_column(primary_key=True); service: Mapped[str]=mapped_column(String(200), index=True); website: Mapped[str]=mapped_column(String(500), default=''); username: Mapped[str]=mapped_column(String(300), default=''); encrypted_secret: Mapped[bytes]=mapped_column(); category: Mapped[str]=mapped_column(String(80), default='', index=True); tags: Mapped[str]=mapped_column(String(500), default=''); favorite: Mapped[bool]=mapped_column(Boolean, default=False); created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow); updated_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+class AIModel(Base):
+    __tablename__='ai_models'; id: Mapped[int]=mapped_column(primary_key=True); name: Mapped[str]=mapped_column(String(255)); relative_path: Mapped[str]=mapped_column(String(500), unique=True); source: Mapped[str]=mapped_column(String(30), default='models'); size: Mapped[int]=mapped_column(default=0); metadata_json: Mapped[str]=mapped_column(Text, default='{}'); last_error: Mapped[str]=mapped_column(Text, default=''); created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow); updated_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+class AIConversation(Base):
+    __tablename__='ai_conversations'; id: Mapped[int]=mapped_column(primary_key=True); title: Mapped[str]=mapped_column(String(200), default='New conversation'); model_name: Mapped[str]=mapped_column(String(255), default=''); created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow); updated_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+class AIMessage(Base):
+    __tablename__='ai_messages'; id: Mapped[int]=mapped_column(primary_key=True); conversation_id: Mapped[int]=mapped_column(ForeignKey('ai_conversations.id'), index=True); role: Mapped[str]=mapped_column(String(20)); content: Mapped[str]=mapped_column(Text); created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
 Base.metadata.create_all(engine)
+with engine.begin() as connection:
+    attachment_columns={row[1] for row in connection.execute(text('PRAGMA table_info(attachments)')).fetchall()}
+    if 'folder_id' not in attachment_columns:
+        connection.execute(text('ALTER TABLE attachments ADD COLUMN folder_id INTEGER REFERENCES folders(id)'))
 
 SESSION_SECRET=os.getenv('KAZEVAULT_SESSION_SECRET') or secrets.token_urlsafe(48)
 NETWORK_MODE=os.getenv('KAZEVAULT_MODE','local').lower(); NETWORK_MODE=NETWORK_MODE if NETWORK_MODE in {'local','lan','remote'} else 'local'
@@ -61,6 +73,7 @@ BACKUP_FORMAT='kazevault-backup-1'; MAX_BACKUP_ARCHIVE=2*1024*1024*1024
 MAX_UPLOAD=int(os.getenv('KAZEVAULT_MAX_UPLOAD_MB','512'))*1024*1024
 vault_keys={}; VAULT_IDLE_SECONDS=int(os.getenv('KAZEVAULT_VAULT_IDLE_SECONDS','900'))
 login_attempts={}
+AI_MODEL_DIR=Path(os.getenv('KAZEVAULT_AI_MODEL_DIR',DATA/'models')).resolve(); AI_MODEL_DIR.mkdir(parents=True,exist_ok=True)
 def db(): return SessionLocal()
 def user(request): return request.session.get('uid')
 def require(request):
@@ -100,7 +113,7 @@ def network_info():
     configured=os.getenv('KAZEVAULT_PUBLIC_URL','').strip().rstrip('/')
     safe=configured.startswith('https://') or configured.startswith('http://localhost') or configured.startswith('http://127.0.0.1')
     return {'mode':NETWORK_MODE,'mode_label':{'local':'Local-only','lan':'Trusted LAN','remote':'Private remote proxy'}[NETWORK_MODE],'public_url':configured if safe else None,'https':os.getenv('KAZEVAULT_HTTPS','0')=='1'}
-def ctx(request, **kw): return {'request':request, 'setup_needed':setup_needed(), 'csrf_token':csrf(request), 'flash':request.session.pop('flash',None), 'network':network_info(), **kw}
+def ctx(request, **kw): return {'request':request, 'setup_needed':setup_needed(), 'csrf_token':csrf(request), 'flash':request.session.pop('flash',None), 'network':network_info(), 'file_group':file_group, **kw}
 
 def _safe_zip_name(name):
     p=Path(name.replace('\\','/'))
@@ -162,6 +175,212 @@ def backup_summary(path):
     try:
         m=validate_backup(path); return {'ok':True,'created_at':m['created_at'],'attachments':len(m['attachments']),'error':None}
     except Exception as e: return {'ok':False,'created_at':'unknown','attachments':0,'error':str(e)}
+def file_group(item):
+    c=(item.content_type or '').lower(); ext=Path(item.original_name or '').suffix.lower()
+    if c.startswith('video/') or ext in {'.mp4','.webm','.mov','.mkv','.avi','.m4v'}: return 'videos'
+    if c.startswith('image/') or ext in {'.png','.jpg','.jpeg','.gif','.webp','.bmp','.ico','.svg'}: return 'images'
+    if c.startswith('audio/') or ext in {'.mp3','.wav','.aac','.flac','.ogg','.m4a'}: return 'audio'
+    if ext in {'.zip','.7z','.rar','.tar','.gz','.bz2'}: return 'archives'
+    if ext in {'.py','.js','.ts','.html','.css','.json','.yaml','.yml','.xml','.toml','.ini','.ps1','.bat','.sh'}: return 'code'
+    if c.startswith(('text/','application/pdf')) or ext in {'.pdf','.txt','.md','.doc','.docx','.xls','.xlsx','.ppt','.pptx','.csv','.rtf'}: return 'documents'
+    return 'other'
+SYSTEM_FOLDERS=(('videos','Videos'),('images','Images'),('audio','Audio'),('documents','Documents'),('archives','Archives'),('code','Code'),('other','Other'))
+def ensure_file_folders():
+    with db() as s:
+        folders={f.system_key:f for f in s.query(Folder).filter(Folder.parent_id.is_(None)).all()}
+        for key,name in SYSTEM_FOLDERS:
+            if key not in folders:
+                folders[key]=Folder(name=name,system_key=key); s.add(folders[key]); s.flush()
+        for item in s.query(Attachment).filter(Attachment.folder_id.is_(None)).all():
+            item.folder_id=folders[file_group(item)].id
+        s.commit()
+ensure_file_folders()
+
+def ai_endpoint():
+    raw=os.getenv('KAZEVAULT_LLAMA_ENDPOINT','http://127.0.0.1:8081').rstrip('/')
+    parsed=urlparse(raw)
+    if parsed.scheme not in {'http','https'} or parsed.hostname not in {'127.0.0.1','localhost','::1'} or parsed.path not in {'','/'}:
+        return None
+    return raw
+def approved_model_path(relative_path):
+    if not relative_path or Path(relative_path).is_absolute() or '..' in Path(relative_path).parts: return None
+    roots=[AI_MODEL_DIR,ATTACH]
+    if relative_path.startswith('attachments/'):
+        candidates=[ATTACH/Path(relative_path).relative_to('attachments')]
+    else:
+        candidates=[AI_MODEL_DIR/relative_path,ATTACH/relative_path]
+    for candidate in candidates:
+        resolved=candidate.resolve()
+        if any(resolved==root or root in resolved.parents for root in roots) and resolved.is_file(): return resolved
+    return None
+def gguf_info(path):
+    try:
+        with path.open('rb') as f: magic=f.read(4)
+        if magic!=b'GGUF': return None
+        return {'format':'GGUF','size_bytes':path.stat().st_size}
+    except OSError: return None
+def discover_ai_models():
+    found=[]
+    for path in AI_MODEL_DIR.rglob('*.gguf'):
+        if path.is_file(): found.append((path,'models',str(path.relative_to(AI_MODEL_DIR)).replace('\\','/')))
+    with db() as s:
+        for item in s.query(Attachment).filter(Attachment.original_name.ilike('%.gguf')).all():
+            path=ATTACH/item.stored_name
+            if path.is_file(): found.append((path,'attachment',f'attachments/{item.stored_name}'))
+        rows=[]
+        for path,source,relative in found:
+            info=gguf_info(path)
+            if not info: continue
+            row=s.query(AIModel).filter_by(relative_path=relative).first()
+            if not row: row=AIModel(name=path.name,relative_path=relative,source=source); s.add(row)
+            row.name=path.name; row.size=path.stat().st_size; row.metadata_json=json.dumps(info); rows.append(row)
+        s.commit()
+        return rows
+class LlamaManager:
+    def __init__(self): self.process=None; self.model_id=None; self.status='available'; self.error=''; self.lock=threading.RLock(); self.cancel_event=threading.Event()
+    def executable(self):
+        value=os.getenv('KAZEVAULT_LLAMA_SERVER','').strip()
+        return Path(value).resolve() if value else None
+    def version(self):
+        exe=self.executable()
+        if not exe or not exe.is_file(): return None
+        try: return subprocess.run([str(exe),'--version'],capture_output=True,text=True,timeout=5,check=False).stdout.strip() or 'version check completed'
+        except (OSError,subprocess.SubprocessError) as exc: self.error=f'Unable to verify llama-server.exe: {exc}'; return None
+    def health(self):
+        endpoint=ai_endpoint()
+        if not endpoint: return False
+        try:
+            import urllib.request
+            with urllib.request.urlopen(endpoint+'/health',timeout=1) as response: return response.status==200
+        except Exception: return False
+    def start(self,model):
+        with self.lock:
+            if self.process and self.process.poll() is None:
+                if self.model_id==model.id and self.health(): return True
+                self.unload()
+            exe=self.executable()
+            if not exe or not exe.is_file(): self.status='error'; self.error='Configure KAZEVAULT_LLAMA_SERVER to an existing llama-server.exe.'; return False
+            model_path=approved_model_path(model.relative_path)
+            if not model_path or not gguf_info(model_path): self.status='error'; self.error='The selected model is not a valid readable GGUF file.'; return False
+            endpoint=ai_endpoint()
+            if not endpoint: self.status='error'; self.error='KAZEVAULT_LLAMA_ENDPOINT must point to loopback.'; return False
+            port=urlparse(endpoint).port or 8081; ctx=min(max(int(os.getenv('KAZEVAULT_AI_CONTEXT','2048')),512),8192); predict=min(max(int(os.getenv('KAZEVAULT_AI_MAX_TOKENS','512')),32),2048)
+            self.status='loading'; self.error=''; self.cancel_event.clear()
+            args=[str(exe),'--model',str(approved_model_path(model.relative_path)),'--host','127.0.0.1','--port',str(port),'--ctx-size',str(ctx),'--n-predict',str(predict),'--parallel','1']
+            try: self.process=subprocess.Popen([str(exe),'--model',str(model_path),'--host','127.0.0.1','--port',str(port),'--ctx-size',str(ctx),'--n-predict',str(predict),'--parallel','1'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); self.model_id=model.id
+            except OSError as exc: self.status='error'; self.error=f'Could not start llama-server.exe: {exc}'; return False
+        deadline=time.monotonic()+30
+        while time.monotonic()<deadline:
+            if self.process.poll() is not None: self.status='error'; self.error='llama-server exited while loading the model.'; return False
+            if self.health(): self.status='loaded'; return True
+            time.sleep(.25)
+        self.status='error'; self.error='Timed out waiting for the inference backend.'; self.unload(); return False
+    def unload(self):
+        with self.lock:
+            self.cancel_event.set(); process=self.process; self.process=None; self.model_id=None; self.status='unloading'
+            if process and process.poll() is None:
+                process.terminate()
+                try: process.wait(timeout=5)
+                except subprocess.TimeoutExpired: process.kill(); process.wait(timeout=2)
+            self.status='available'; self.error=''
+    def state(self):
+        with self.lock:
+            if self.process and self.process.poll() is not None: self.status='error'; self.error='Inference backend stopped unexpectedly.'; self.process=None
+            return {'status':self.status,'model_id':self.model_id,'error':self.error,'configured':bool(self.executable() and self.executable().is_file()),'endpoint':'loopback','version':self.version()}
+llama=LlamaManager()
+def ai_model_view(model):
+    return {'id':model.id,'name':model.name,'path':model.relative_path,'source':model.source,'size':model.size,'metadata':json.loads(model.metadata_json or '{}')}
+@app.get('/ai',response_class=HTMLResponse)
+def ai_hub(request: Request):
+    require(request); models=discover_ai_models()
+    with db() as s: conversations=s.query(AIConversation).order_by(AIConversation.updated_at.desc()).limit(30).all()
+    return templates.TemplateResponse('ai.html',ctx(request,models=[ai_model_view(m) for m in models],conversations=conversations,state=llama.state(),selected_model=llama.model_id))
+@app.get('/api/ai/state')
+def ai_state(request: Request):
+    require(request); return JSONResponse({'models':[ai_model_view(m) for m in discover_ai_models()],'state':llama.state()})
+@app.post('/api/ai/models/{model_id}/start')
+def ai_start(request: Request,model_id:int,_:None=Depends(csrf_protect)):
+    require(request)
+    with db() as s: model=s.get(AIModel,model_id)
+    if not model: raise HTTPException(404,'Model not found')
+    if model.size>8*1024*1024*1024: raise HTTPException(413,'This model is larger than the safe 8 GB limit.')
+    if not llama.start(model): raise HTTPException(503,llama.error or 'Inference backend unavailable')
+    return JSONResponse(llama.state())
+@app.post('/api/ai/unload')
+def ai_unload(request: Request,_:None=Depends(csrf_protect)):
+    require(request); llama.unload(); return JSONResponse(llama.state())
+@app.post('/api/ai/cancel')
+def ai_cancel(request: Request,_:None=Depends(csrf_protect)):
+    require(request); llama.cancel_event.set(); return JSONResponse({'ok':True})
+@app.post('/api/ai/conversations')
+def ai_new_conversation(request: Request,_:None=Depends(csrf_protect)):
+    require(request)
+    with db() as s: c=AIConversation(); s.add(c); s.commit(); return JSONResponse({'id':c.id,'title':c.title})
+@app.post('/api/ai/conversations/clear')
+def ai_clear_conversations(request: Request,_:None=Depends(csrf_protect)):
+    require(request)
+    with db() as s: s.query(AIMessage).delete(); s.query(AIConversation).delete(); s.commit()
+    return JSONResponse({'ok':True})
+@app.get('/api/ai/conversations/{conversation_id}')
+def ai_conversation(request: Request,conversation_id:int):
+    require(request)
+    with db() as s:
+        c=s.get(AIConversation,conversation_id)
+        if not c: raise HTTPException(404)
+        messages=s.query(AIMessage).filter_by(conversation_id=c.id).order_by(AIMessage.id).all()
+        return JSONResponse({'id':c.id,'title':c.title,'model_name':c.model_name,'messages':[{'role':m.role,'content':m.content} for m in messages]})
+@app.post('/api/ai/conversations/{conversation_id}/delete')
+def ai_delete_conversation(request: Request,conversation_id:int,_:None=Depends(csrf_protect)):
+    require(request)
+    with db() as s:
+        c=s.get(AIConversation,conversation_id)
+        if not c: raise HTTPException(404,'Conversation not found')
+        s.query(AIMessage).filter_by(conversation_id=c.id).delete(); s.delete(c); s.commit()
+    return JSONResponse({'ok':True})
+@app.post('/api/ai/chat')
+async def ai_chat(request:Request,prompt:str=Form(...),conversation_id:int=Form(0),_:None=Depends(csrf_protect)):
+    require(request)
+    if not prompt.strip() or len(prompt)>20000: raise HTTPException(400,'Prompt must contain 1-20,000 characters')
+    if llama.status!='loaded' or not llama.model_id: raise HTTPException(409,'Load a model before chatting')
+    with db() as s:
+        c=s.get(AIConversation,conversation_id) if conversation_id else None
+        if not c: c=AIConversation(title=prompt.strip()[:80]); s.add(c); s.flush()
+        model=s.get(AIModel,llama.model_id); model_name=model.name if model else 'Unknown model'
+        if c.model_name and c.model_name!=model_name: raise HTTPException(409,'This conversation is tied to another model')
+        c.model_name=model_name; s.add(AIMessage(conversation_id=c.id,role='user',content=prompt.strip())); s.commit(); cid=c.id
+        history=s.query(AIMessage).filter_by(conversation_id=cid).order_by(AIMessage.id).all()
+    payload=json.dumps({'messages':[{'role':m.role,'content':m.content} for m in history],'stream':True,'temperature':0.7}).encode(); endpoint=ai_endpoint()
+    llama.cancel_event.clear()
+    async def stream():
+        chunks=[]; events=queue.Queue()
+        def worker():
+            try:
+                import urllib.request
+                req=urllib.request.Request(endpoint+'/v1/chat/completions',data=payload,headers={'Content-Type':'application/json'},method='POST')
+                with urllib.request.urlopen(req,timeout=120) as response:
+                    for raw in response:
+                        if llama.cancel_event.is_set(): break
+                        line=raw.decode('utf-8','replace').strip()
+                        if not line.startswith('data:'): continue
+                        data=line[5:].strip()
+                        if data=='[DONE]': break
+                        try:
+                            delta=json.loads(data).get('choices',[{}])[0].get('delta',{}).get('content','')
+                            if delta: events.put(('chunk',delta))
+                        except (ValueError,IndexError,KeyError): continue
+            except Exception: events.put(('error','Inference backend unavailable'))
+            finally: events.put(('done',''))
+        threading.Thread(target=worker,daemon=True).start()
+        while True:
+            kind,value=await asyncio.to_thread(events.get)
+            if kind=='chunk': chunks.append(value); yield f'data: {json.dumps({"text":value})}\n\n'
+            elif kind=='error': yield f'data: {json.dumps({"error":"Inference backend unavailable"})}\n\n'
+            else: break
+        answer=''.join(chunks)
+        if answer:
+            with db() as s: s.add(AIMessage(conversation_id=cid,role='assistant',content=answer)); s.commit()
+        yield f'data: {json.dumps({"conversation_id":cid,"done":True})}\n\n'
+    return StreamingResponse(stream(),media_type='text/event-stream',headers={'Cache-Control':'no-cache','X-Accel-Buffering':'no'})
 
 @app.get('/', response_class=HTMLResponse)
 def home(request: Request):
@@ -228,11 +447,20 @@ def delete_record(request: Request,rid:int, _: None=Depends(csrf_protect)):
 
 @app.get('/documents',response_class=HTMLResponse)
 @app.get('/files',response_class=HTMLResponse)
-def documents(request: Request, q: str='', sort: str='date'):
+def documents(request: Request, q: str='', sort: str='date', folder: str='0'):
     require(request)
-    with db() as s: query=s.query(Attachment); items=query.filter(Attachment.original_name.ilike(f'%{q}%')).all() if q else query.all()
+    folder_id=0 if folder in ('','0','all') else int(folder) if folder.isdigit() else 0
+    with db() as s:
+        folders=s.query(Folder).filter(Folder.parent_id.is_(None)).order_by(Folder.name).all()
+        current=s.get(Folder,folder_id) if folder_id else None
+        if current and current.parent_id is not None: current=None; folder_id=0
+        query=s.query(Attachment)
+        if current: query=query.filter(Attachment.folder_id==current.id)
+        if q: query=query.filter(Attachment.original_name.ilike(f'%{q}%'))
+        items=query.all()
+        counts={f.id:s.query(Attachment).filter(Attachment.folder_id==f.id).count() for f in folders}
     key={'name':lambda x:x.original_name.lower(),'size':lambda x:x.size,'type':lambda x:x.content_type,'date':lambda x:x.created_at}.get(sort,lambda x:x.created_at); items=sorted(items,key=key,reverse=sort in ('size','date'))
-    return templates.TemplateResponse('documents.html',ctx(request,items=items,error=None,q=q,sort=sort,usage=sum(x.size for x in items)))
+    return templates.TemplateResponse('documents.html',ctx(request,items=items,error=None,q=q,sort=sort,folder=folder_id,current_folder=current,folders=folders,counts=counts,usage=sum(x.size for x in items)))
 @app.get('/media',response_class=HTMLResponse)
 def media(request: Request, q: str='', page: int=1):
     require(request); page=max(1,page)
@@ -241,7 +469,7 @@ def media(request: Request, q: str='', page: int=1):
 @app.post('/documents/upload')
 async def upload(request:Request,file:UploadFile=File(...),category:str=Form(''), _: None=Depends(csrf_protect)):
     require(request); suffix=Path(file.filename or '').suffix.lower().lstrip('.'); original=file.filename or ''
-    if not original or Path(original).name != original or any(ord(c)<32 for c in original) or len(original)>255: return templates.TemplateResponse('documents.html',ctx(request,items=[],error='Filename is not allowed.',q='',sort='date',usage=0))
+    if not original or Path(original).name != original or any(ord(c)<32 for c in original) or len(original)>255: return RedirectResponse('/files',303)
     if shutil.disk_usage(ATTACH).free < 1024*1024: raise HTTPException(507,'Not enough free storage space')
     stored=secrets.token_hex(16)+('.'+suffix if suffix else ''); temp=ATTACH/f'.upload-{uuid.uuid4().hex}.tmp'; size=0
     try:
@@ -253,12 +481,15 @@ async def upload(request:Request,file:UploadFile=File(...),category:str=Form('')
                 if size>MAX_UPLOAD: raise HTTPException(413,f'File exceeds configured limit of {MAX_UPLOAD//1024//1024} MB')
                 out.write(chunk)
         temp.replace(ATTACH/stored)
-        with db() as s: s.add(Attachment(stored_name=stored,original_name=original,content_type=file.content_type or 'application/octet-stream',size=size,category=category)); s.commit()
+        with db() as s:
+            content_type=file.content_type or 'application/octet-stream'
+            folder=s.query(Folder).filter_by(system_key=file_group(Attachment(original_name=original,content_type=content_type))).first()
+            s.add(Attachment(stored_name=stored,original_name=original,content_type=content_type,size=size,category=category,folder_id=folder.id)); s.commit()
     except Exception:
         temp.unlink(missing_ok=True); (ATTACH/stored).unlink(missing_ok=True); raise
     return RedirectResponse('/documents',303)
 @app.get('/documents/{aid}/download')
-def download(request: Request,aid:int):
+def download(request: Request,aid:int,download: bool=False):
     require(request)
     with db() as s: a=s.get(Attachment,aid)
     if not a or not (ATTACH/a.stored_name).is_file(): raise HTTPException(404)
@@ -279,7 +510,7 @@ def download(request: Request,aid:int):
                 if not chunk: break
                 remaining-=len(chunk); yield chunk
     inline=a.content_type.startswith(('video/','audio/','image/')) and a.content_type!='image/svg+xml'
-    disposition='inline' if inline else 'attachment'; headers={'Content-Length':str(length),'Accept-Ranges':'bytes','Content-Disposition':f"{disposition}; filename*=UTF-8''{quote(a.original_name)}",'X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; frame-ancestors 'none'"}
+    disposition='attachment' if download or not inline else 'inline'; headers={'Content-Length':str(length),'Accept-Ranges':'bytes','Content-Disposition':f"{disposition}; filename*=UTF-8''{quote(a.original_name)}",'X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; frame-ancestors 'none'"}
     if status==206: headers['Content-Range']=f'bytes {start}-{end}/{total}'
     return StreamingResponse(body(),status_code=status,media_type=a.content_type,headers=headers)
 @app.post('/documents/{aid}/delete')

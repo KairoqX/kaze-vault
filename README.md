@@ -77,7 +77,7 @@ Files now have a searchable/sortable explorer at `/files`, a dedicated media lib
 
 `/search` searches records, notes, journal entries, knowledge entries, and file metadata. It does not search file contents or password-vault secrets. `/system` is administrator-only and provides read-only SQLite integrity, free-space, storage-usage, backup-status, and missing/orphaned attachment checks. It does not automatically repair or delete anything.
 
-Multi-file bulk operations, virtual folders, and automatic thumbnail generation are intentionally not enabled yet. Use the existing upload control for individual files and the explicit delete controls for cleanup. The application still requires a restart after source updates and after restores. Mobile layouts were checked through automated route/template tests and responsive CSS; no physical Android device test was performed.
+Files are organized into persistent database folders automatically: All files, Videos, Images, Audio, Documents, Archives, Code, and Other. Each attachment stores its `folder_id`, and the Files page behaves like an explorer: open a folder to view its contents. Grouping uses the detected content type and filename extension, and does not move or rename the underlying stored attachment, so existing files and backup references remain safe. Multi-file bulk operations and automatic thumbnail generation are not enabled yet. The application still requires a restart after source updates and after restores. Mobile layouts were checked through automated route/template tests and responsive CSS; no physical Android device test was performed.
 
 ## Phase 6: Android PWA installation
 
@@ -100,6 +100,24 @@ For remote access without public exposure, install Tailscale independently on th
 Set `KAZEVAULT_PUBLIC_URL` only to a URL you intentionally want displayed in the dashboard. Only HTTPS URLs and localhost URLs are displayed. Set `KAZEVAULT_ALLOWED_HOSTS` to a comma-separated list of trusted proxy hostnames when using a reverse proxy. KazeVault does not trust arbitrary forwarded headers. Set `KAZEVAULT_HTTPS=1` when the browser-facing connection is HTTPS so secure cookies are enabled; do not set it for ordinary HTTP LAN access.
 
 If a device cannot connect, verify the server is running in the intended mode, the address and port are correct, Windows Firewall permits only the intended Private network, both devices can reach each other, and any HTTPS certificate is trusted by the device. A failed connection must not be treated as an empty database; the UI shows a server-unavailable warning instead.
+
+## Phase 8: private AI hub
+
+The authenticated `/ai` page is an optional local AI interface. It discovers only valid `.gguf` files in the approved `KAZEVAULT_AI_MODEL_DIR` directory (default `data\models`) and existing KazeVault GGUF attachments. It does not download, execute, or scan arbitrary system files. Model metadata is stored in SQLite; model binaries in the dedicated model directory are not copied into ordinary KazeVault backups. GGUF files uploaded as ordinary attachments follow the existing attachment backup policy.
+
+KazeVault uses an existing `llama-server.exe` as an optional loopback-only backend. Configure it before starting the server:
+
+```powershell
+$env:KAZEVAULT_LLAMA_SERVER='C:\path\to\llama-server.exe'
+$env:KAZEVAULT_AI_MODEL_DIR='F:\KazeVault\data\models'
+$env:KAZEVAULT_LLAMA_ENDPOINT='http://127.0.0.1:8081'
+$env:KAZEVAULT_AI_CONTEXT='2048'
+$env:KAZEVAULT_AI_MAX_TOKENS='512'
+```
+
+The AI backend is never exposed to LAN, Tailscale, or browser clients directly. Authenticated KazeVault endpoints proxy chat requests, enforce CSRF for operations, and support one active model at a time. Loading a model is resource-intensive; file size is only an estimate, not actual RAM usage, and GPU acceleration is not assumed. Android and other devices use the same private HTTPS KazeVault URL; they do not run the model locally. Stop or unload the model from the AI Hub before shutting down the host. Prompt and response text is not sent to external providers and is not automatically populated with vault records, attachments, passwords, or secrets.
+
+If `llama-server.exe` is missing, the AI Hub remains usable for setup instructions and reports the configuration error instead of downloading an executable. Unsupported GGUF files, path traversal, non-loopback endpoints, backend startup failures, timeouts, and crashed processes are surfaced as errors. The current implementation does not provide automatic model downloads, GPU configuration, arbitrary folder import, or a claim that a model is loaded until the backend health endpoint confirms it.
 
 ## Optional startup
 

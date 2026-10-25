@@ -100,7 +100,12 @@ def test_unified_search_media_range_and_system_report(app_client):
     csrf=token(client.get('/documents').text)
     client.post('/documents/upload', data={'csrf_token':csrf}, files={'file':('clip.mp4',b'0123456789','video/mp4')}, follow_redirects=False)
     media=client.get('/media'); assert media.status_code==200 and 'clip.mp4' in media.text
+    explorer=client.get('/files'); assert explorer.status_code==200 and '📁 Videos' in explorer.text
+    folder_id=re.search(r'href="/files\?folder=(\d+)">📁 Videos', explorer.text).group(1)
+    files=client.get(f'/files?folder={folder_id}'); assert files.status_code==200 and 'clip.mp4' in files.text
+    assert 'All files' in explorer.text
     download=client.get('/documents/1/download',headers={'Range':'bytes=0-3'}); assert download.status_code in (200,206)
+    forced=client.get('/documents/1/download?download=1'); assert 'attachment' in forced.headers.get('content-disposition','')
     assert client.get('/system').status_code==200
 
 def test_pwa_manifest_and_safe_service_worker(app_client):
@@ -119,3 +124,19 @@ def test_network_mode_and_host_guard(app_client, monkeypatch):
     import importlib
     reloaded=importlib.reload(module)
     assert reloaded.network_info()['mode']=='local'
+
+def test_ai_hub_auth_model_discovery_and_missing_backend(app_client):
+    module, client=app_client
+    assert client.get('/ai', follow_redirects=False).status_code==303
+    setup_user(client); login(client)
+    model_path=module.AI_MODEL_DIR/'tiny.gguf'; model_path.write_bytes(b'GGUF'+b'0'*64)
+    page=client.get('/ai'); assert page.status_code==200 and 'tiny.gguf' in page.text and 'AI Chat' in page.text
+    assert client.post('/api/ai/unload').status_code==403
+    csrf=token(page.text)
+    model=module.discover_ai_models()[0]
+    response=client.post(f'/api/ai/models/{model.id}/start',data={'csrf_token':csrf},follow_redirects=False)
+    assert response.status_code==503 and 'KAZEVAULT_LLAMA_SERVER' in response.text
+    assert module.approved_model_path('../tiny.gguf') is None
+    conversation=client.post('/api/ai/conversations',data={'csrf_token':csrf}).json()
+    assert client.post(f"/api/ai/conversations/{conversation['id']}/delete").status_code==403
+    assert client.post(f"/api/ai/conversations/{conversation['id']}/delete",data={'csrf_token':csrf}).json()['ok'] is True

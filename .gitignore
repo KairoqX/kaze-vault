@@ -6,4 +6,4 @@ backups/
 logs/
 __pycache__/
 .pytest_cache/
-
+data/models/*
