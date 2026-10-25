@@ -1,9 +1,10 @@
 import os, secrets, shutil, sqlite3, zipfile, tempfile, time, hmac, re, json, hashlib, uuid
+from urllib.parse import quote
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -11,6 +12,8 @@ from sqlalchemy import create_engine, String, Text, Boolean, DateTime, ForeignKe
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker, Session
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = Path(os.getenv('KAZEVAULT_DATA', ROOT/'data')); ATTACH = DATA/'attachments'; BACKUPS = ROOT/'backups'
@@ -27,6 +30,10 @@ class Record(Base):
     __tablename__='records'; id: Mapped[int]=mapped_column(primary_key=True); kind: Mapped[str]=mapped_column(String(20), default='record'); title: Mapped[str]=mapped_column(String(200)); content: Mapped[str]=mapped_column(Text, default=''); category: Mapped[str]=mapped_column(String(80), default=''); tags: Mapped[str]=mapped_column(String(500), default=''); favorite: Mapped[bool]=mapped_column(Boolean, default=False); entry_date: Mapped[str]=mapped_column(String(20), nullable=True); created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow); updated_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 class Attachment(Base):
     __tablename__='attachments'; id: Mapped[int]=mapped_column(primary_key=True); stored_name: Mapped[str]=mapped_column(String(100), unique=True); original_name: Mapped[str]=mapped_column(String(255)); content_type: Mapped[str]=mapped_column(String(100), default='application/octet-stream'); size: Mapped[int]=mapped_column(default=0); category: Mapped[str]=mapped_column(String(80), default=''); created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
+class Vault(Base):
+    __tablename__='password_vault'; id: Mapped[int]=mapped_column(primary_key=True); salt: Mapped[bytes]=mapped_column(); verifier: Mapped[bytes]=mapped_column(); created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
+class PasswordEntry(Base):
+    __tablename__='password_entries'; id: Mapped[int]=mapped_column(primary_key=True); service: Mapped[str]=mapped_column(String(200), index=True); website: Mapped[str]=mapped_column(String(500), default=''); username: Mapped[str]=mapped_column(String(300), default=''); encrypted_secret: Mapped[bytes]=mapped_column(); category: Mapped[str]=mapped_column(String(80), default='', index=True); tags: Mapped[str]=mapped_column(String(500), default=''); favorite: Mapped[bool]=mapped_column(Boolean, default=False); created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow); updated_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 Base.metadata.create_all(engine)
 
 SESSION_SECRET=os.getenv('KAZEVAULT_SESSION_SECRET') or secrets.token_urlsafe(48)
@@ -35,6 +42,8 @@ templates=Jinja2Templates(directory=str(ROOT/'app/templates'))
 app.mount('/static', StaticFiles(directory=str(ROOT/'app/static')), name='static')
 MAX_UPLOAD=25*1024*1024; ALLOWED={'pdf','txt','md','png','jpg','jpeg','gif','webp','docx','xlsx','csv'}; LOGIN_WINDOW=300; LOGIN_MAX=5
 BACKUP_FORMAT='kazevault-backup-1'; MAX_BACKUP_ARCHIVE=2*1024*1024*1024
+MAX_UPLOAD=int(os.getenv('KAZEVAULT_MAX_UPLOAD_MB','512'))*1024*1024
+vault_keys={}; VAULT_IDLE_SECONDS=int(os.getenv('KAZEVAULT_VAULT_IDLE_SECONDS','900'))
 login_attempts={}
 def db(): return SessionLocal()
 def user(request): return request.session.get('uid')
@@ -45,6 +54,23 @@ def csrf(request: Request):
     if not token:
         token=secrets.token_urlsafe(32); request.session['csrf_token']=token
     return token
+def vault_key(request: Request):
+    token=request.session.get('vault_token'); state=vault_keys.get(token) if token else None
+    if not state: return None
+    key,last=state
+    if time.monotonic()-last>VAULT_IDLE_SECONDS:
+        vault_keys.pop(token,None); request.session.pop('vault_token',None); return None
+    vault_keys[token]=(key,time.monotonic()); return key
+def derive_vault_key(password,salt):
+    return Scrypt(salt=salt,length=32,n=2**14,r=8,p=1).derive(password.encode('utf-8'))
+def vault_encrypt(key, value):
+    nonce=secrets.token_bytes(12); return nonce+AESGCM(key).encrypt(nonce,value.encode('utf-8'),None)
+def vault_decrypt(key, value):
+    return AESGCM(key).decrypt(value[:12],value[12:],None).decode('utf-8')
+def require_vault(request):
+    key=vault_key(request)
+    if not key: raise HTTPException(403,'Password vault is locked')
+    return key
 async def csrf_protect(request: Request):
     form=await request.form(); expected=request.session.get('csrf_token'); supplied=form.get('csrf_token','')
     if not expected or not supplied or not hmac.compare_digest(str(expected),str(supplied)): raise HTTPException(403,'Invalid CSRF token')
@@ -144,7 +170,8 @@ def login_post(request: Request, username: str=Form(...), password: str=Form(...
     key=request.client.host if request.client else 'unknown'; login_attempts.pop(key,None)
     request.session.clear(); request.session['uid']=u.id; csrf(request); return RedirectResponse('/',303)
 @app.post('/logout')
-def logout(request: Request, _: None=Depends(csrf_protect)): request.session.clear(); return RedirectResponse('/login',303)
+def logout(request: Request, _: None=Depends(csrf_protect)):
+    token=request.session.pop('vault_token',None); vault_keys.pop(token,None) if token else None; request.session.clear(); return RedirectResponse('/login',303)
 
 @app.get('/records',response_class=HTMLResponse)
 def records(request: Request, q: str='', kind: str='', page:int=1):
@@ -180,34 +207,132 @@ def delete_record(request: Request,rid:int, _: None=Depends(csrf_protect)):
     return RedirectResponse('/records',303)
 
 @app.get('/documents',response_class=HTMLResponse)
-def documents(request: Request):
+@app.get('/files',response_class=HTMLResponse)
+def documents(request: Request, q: str='', sort: str='date'):
     require(request)
-    with db() as s: items=s.query(Attachment).order_by(Attachment.created_at.desc()).all()
-    return templates.TemplateResponse('documents.html',ctx(request,items=items,error=None))
+    with db() as s: query=s.query(Attachment); items=query.filter(Attachment.original_name.ilike(f'%{q}%')).all() if q else query.all()
+    key={'name':lambda x:x.original_name.lower(),'size':lambda x:x.size,'type':lambda x:x.content_type,'date':lambda x:x.created_at}.get(sort,lambda x:x.created_at); items=sorted(items,key=key,reverse=sort in ('size','date'))
+    return templates.TemplateResponse('documents.html',ctx(request,items=items,error=None,q=q,sort=sort,usage=sum(x.size for x in items)))
 @app.post('/documents/upload')
 async def upload(request:Request,file:UploadFile=File(...),category:str=Form(''), _: None=Depends(csrf_protect)):
-    require(request); suffix=Path(file.filename or '').suffix.lower().lstrip('.')
-    original=file.filename or ''
-    if suffix not in ALLOWED or Path(original).name != original or any(ord(c)<32 for c in original): return templates.TemplateResponse('documents.html',ctx(request,items=[],error='File type or filename is not allowed.'))
-    data=await file.read()
-    if len(data)>MAX_UPLOAD: raise HTTPException(413,'File exceeds 25 MB limit')
-    stored=secrets.token_hex(16)+'.'+suffix; (ATTACH/stored).write_bytes(data)
-    with db() as s: s.add(Attachment(stored_name=stored,original_name=Path(file.filename).name,content_type=file.content_type or 'application/octet-stream',size=len(data),category=category)); s.commit()
+    require(request); suffix=Path(file.filename or '').suffix.lower().lstrip('.'); original=file.filename or ''
+    if not original or Path(original).name != original or any(ord(c)<32 for c in original) or len(original)>255: return templates.TemplateResponse('documents.html',ctx(request,items=[],error='Filename is not allowed.',q='',sort='date',usage=0))
+    if shutil.disk_usage(ATTACH).free < 1024*1024: raise HTTPException(507,'Not enough free storage space')
+    stored=secrets.token_hex(16)+('.'+suffix if suffix else ''); temp=ATTACH/f'.upload-{uuid.uuid4().hex}.tmp'; size=0
+    try:
+        with temp.open('wb') as out:
+            while True:
+                chunk=await file.read(1024*1024)
+                if not chunk: break
+                size+=len(chunk)
+                if size>MAX_UPLOAD: raise HTTPException(413,f'File exceeds configured limit of {MAX_UPLOAD//1024//1024} MB')
+                out.write(chunk)
+        temp.replace(ATTACH/stored)
+        with db() as s: s.add(Attachment(stored_name=stored,original_name=original,content_type=file.content_type or 'application/octet-stream',size=size,category=category)); s.commit()
+    except Exception:
+        temp.unlink(missing_ok=True); (ATTACH/stored).unlink(missing_ok=True); raise
     return RedirectResponse('/documents',303)
 @app.get('/documents/{aid}/download')
 def download(request: Request,aid:int):
     require(request)
     with db() as s: a=s.get(Attachment,aid)
     if not a or not (ATTACH/a.stored_name).is_file(): raise HTTPException(404)
-    response=FileResponse(ATTACH/a.stored_name,filename=a.original_name,media_type=a.content_type)
-    response.headers['X-Content-Type-Options']='nosniff'; response.headers['Content-Security-Policy']="default-src 'none'; frame-ancestors 'none'"
-    return response
+    path=ATTACH/a.stored_name; total=path.stat().st_size; start=0; end=total-1; status=200
+    range_header=request.headers.get('range','')
+    if range_header.startswith('bytes='):
+        try:
+            raw=range_header[6:].split(',',1)[0]; left,right=(raw.split('-',1)+[''])[:2]; start=int(left) if left else max(0,total-int(right)); end=int(right) if right else total-1
+            if start<0 or start> end or end>=total: raise ValueError
+            status=206
+        except ValueError: return JSONResponse({'detail':'Invalid range'},status_code=416,headers={'Content-Range':f'bytes */{total}'})
+    length=end-start+1
+    def body():
+        with path.open('rb') as f:
+            f.seek(start); remaining=length
+            while remaining:
+                chunk=f.read(min(1024*1024,remaining))
+                if not chunk: break
+                remaining-=len(chunk); yield chunk
+    inline=a.content_type.startswith(('video/','audio/','image/')) and a.content_type!='image/svg+xml'
+    disposition='inline' if inline else 'attachment'; headers={'Content-Length':str(length),'Accept-Ranges':'bytes','Content-Disposition':f"{disposition}; filename*=UTF-8''{quote(a.original_name)}",'X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; frame-ancestors 'none'"}
+    if status==206: headers['Content-Range']=f'bytes {start}-{end}/{total}'
+    return StreamingResponse(body(),status_code=status,media_type=a.content_type,headers=headers)
 @app.post('/documents/{aid}/delete')
 def delete_doc(request: Request,aid:int, _: None=Depends(csrf_protect)):
     require(request)
     with db() as s: a=s.get(Attachment,aid); p=ATTACH/a.stored_name if a else None; s.delete(a) if a else None; s.commit()
     if p and p.is_file(): p.unlink()
     return RedirectResponse('/documents',303)
+
+@app.get('/passwords',response_class=HTMLResponse)
+def passwords(request: Request, q: str=''):
+    require(request); key=vault_key(request)
+    with db() as s: vault=s.query(Vault).first(); entries=[] if not key else s.query(PasswordEntry).filter(or_(PasswordEntry.service.ilike(f'%{q}%'),PasswordEntry.username.ilike(f'%{q}%'),PasswordEntry.category.ilike(f'%{q}%'))).order_by(PasswordEntry.favorite.desc(),PasswordEntry.updated_at.desc()).all()
+    return templates.TemplateResponse('passwords.html',ctx(request,vault=vault,unlocked=bool(key),entries=entries,q=q))
+@app.post('/passwords/setup')
+def password_setup(request: Request, master: str=Form(...), confirm: str=Form(...), _: None=Depends(csrf_protect)):
+    require(request)
+    if len(master)<12 or master!=confirm: request.session['flash']='Master password must be at least 12 characters and match confirmation.'; return RedirectResponse('/passwords',303)
+    with db() as s:
+        if s.query(Vault).first(): request.session['flash']='The password vault is already initialized.'; return RedirectResponse('/passwords',303)
+        salt=secrets.token_bytes(16); key=derive_vault_key(master,salt); s.add(Vault(salt=salt,verifier=vault_encrypt(key,'KazeVault vault verifier'))); s.commit()
+    token=secrets.token_urlsafe(32); request.session['vault_token']=token; vault_keys[token]=(key,time.monotonic()); request.session['flash']='Password vault initialized and unlocked.'; return RedirectResponse('/passwords',303)
+@app.post('/passwords/unlock')
+def password_unlock(request: Request, master: str=Form(...), _: None=Depends(csrf_protect)):
+    require(request)
+    with db() as s: v=s.query(Vault).first()
+    if not v: request.session['flash']='Initialize the vault first.'; return RedirectResponse('/passwords',303)
+    try: key=derive_vault_key(master,v.salt); vault_decrypt(key,v.verifier)
+    except Exception: request.session['flash']='Incorrect master password.'; return RedirectResponse('/passwords',303)
+    token=secrets.token_urlsafe(32); request.session['vault_token']=token; vault_keys[token]=(key,time.monotonic()); request.session['flash']='Vault unlocked.'; return RedirectResponse('/passwords',303)
+@app.post('/passwords/lock')
+def password_lock(request: Request, _: None=Depends(csrf_protect)):
+    require(request); token=request.session.pop('vault_token',None); vault_keys.pop(token,None) if token else None; return RedirectResponse('/passwords',303)
+@app.get('/passwords/new',response_class=HTMLResponse)
+def password_new(request: Request): require(request); require_vault(request); return templates.TemplateResponse('password_edit.html',ctx(request,entry=None))
+@app.post('/passwords/save')
+def password_save(request: Request, service: str=Form(...), website: str=Form(''), username: str=Form(''), password: str=Form(...), notes: str=Form(''), category: str=Form(''), tags: str=Form(''), favorite: bool=Form(False), id: int=Form(0), _: None=Depends(csrf_protect)):
+    require(request); key=require_vault(request)
+    if not service.strip() or not password: request.session['flash']='Service and password are required.'; return RedirectResponse('/passwords',303)
+    payload=json.dumps({'password':password,'notes':notes});
+    with db() as s:
+        e=s.get(PasswordEntry,id) if id else PasswordEntry(service=service.strip())
+        if not e: raise HTTPException(404)
+        e.service=service.strip(); e.website=website.strip(); e.username=username.strip(); e.encrypted_secret=vault_encrypt(key,payload); e.category=category.strip(); e.tags=tags.strip(); e.favorite=favorite; s.add(e); s.commit()
+    request.session['flash']='Credential saved.'; return RedirectResponse('/passwords',303)
+@app.get('/passwords/{pid}/edit',response_class=HTMLResponse)
+def password_edit(request: Request,pid:int):
+    require(request); key=require_vault(request)
+    with db() as s: e=s.get(PasswordEntry,pid)
+    if not e: raise HTTPException(404)
+    try: secret=json.loads(vault_decrypt(key,e.encrypted_secret))
+    except Exception: raise HTTPException(500,'Stored credential could not be decrypted')
+    e.secret_notes=secret.get('notes',''); e.secret_password=secret.get('password','')
+    return templates.TemplateResponse('password_edit.html',ctx(request,entry=e))
+@app.post('/passwords/{pid}/reveal')
+def password_reveal(request: Request,pid:int, _: None=Depends(csrf_protect)):
+    require(request); key=require_vault(request)
+    with db() as s: e=s.get(PasswordEntry,pid)
+    if not e: raise HTTPException(404)
+    try: payload=json.loads(vault_decrypt(key,e.encrypted_secret))
+    except Exception: raise HTTPException(500,'Stored credential could not be decrypted')
+    return JSONResponse({'password':payload['password'],'notes':payload.get('notes','')})
+@app.post('/passwords/{pid}/delete')
+def password_delete(request: Request,pid:int, _: None=Depends(csrf_protect)):
+    require(request); require_vault(request)
+    with db() as s: e=s.get(PasswordEntry,pid); s.delete(e) if e else None; s.commit()
+    request.session['flash']='Credential deleted.'; return RedirectResponse('/passwords',303)
+@app.get('/passwords/generate')
+def password_generate(request: Request,length:int=20,upper:bool=True,lower:bool=True,numbers:bool=True,symbols:bool=True,ambiguous:bool=False):
+    require(request); length=max(8,min(length,128)); groups=[]
+    if upper: groups.append('ABCDEFGHJKLMNPQRSTUVWXYZ' if not ambiguous else 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')
+    if lower: groups.append('abcdefghijkmnopqrstuvwxyz' if not ambiguous else 'abcdefghijklmnopqrstuvwxyz')
+    if numbers: groups.append('23456789' if not ambiguous else '0123456789')
+    if symbols: groups.append('!@#$%^&*()-_=+[]{}:,.?')
+    if not groups: raise HTTPException(400,'Choose at least one character set')
+    alphabet=''.join(groups); value=[secrets.choice(g) for g in groups]
+    value += [secrets.choice(alphabet) for _ in range(length-len(value))]; secrets.SystemRandom().shuffle(value)
+    return {'password':''.join(value)}
 
 @app.post('/backup')
 def backup(request: Request, _: None=Depends(csrf_protect)):

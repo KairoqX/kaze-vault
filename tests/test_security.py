@@ -74,3 +74,19 @@ def test_backup_manifest_validation_and_restore(app_client):
     response=client.post(f'/backups/{path.name}/restore', data={'csrf_token':csrf,'confirm':'RESTORE'}, follow_redirects=False)
     assert response.status_code==303
     assert any(p.name.startswith('pre-restore-') for p in module.BACKUPS.glob('*.zip'))
+
+def test_password_vault_encryption_lock_and_generator(app_client):
+    module, client=app_client
+    setup_user(client); login(client)
+    page=client.get('/passwords'); csrf=token(page.text)
+    assert client.post('/passwords/setup', data={'csrf_token':csrf,'master':'vault master password','confirm':'vault master password'}, follow_redirects=False).status_code==303
+    csrf=token(client.get('/passwords/new').text)
+    client.post('/passwords/save', data={'csrf_token':csrf,'service':'Example','username':'alice','password':'SuperSecret123!','notes':'private'}, follow_redirects=False)
+    with module.db() as s:
+        entry=s.query(module.PasswordEntry).first(); assert b'SuperSecret123!' not in entry.encrypted_secret; pid=entry.id
+    csrf=token(client.get('/passwords').text)
+    assert client.post(f'/passwords/{pid}/reveal', data={'csrf_token':csrf}).json()['password']=='SuperSecret123!'
+    assert 'SuperSecret123!' not in client.get('/passwords').text
+    client.post('/passwords/lock', data={'csrf_token':csrf}, follow_redirects=False)
+    assert client.post(f'/passwords/{pid}/reveal', data={'csrf_token':csrf}).status_code==403
+    generated=client.get('/passwords/generate?length=32').json()['password']; assert len(generated)==32

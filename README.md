@@ -61,6 +61,16 @@ Older unversioned ZIPs from the first prototype are not treated as restorable be
 
 For drive protection on supported Windows editions, open **Settings → Privacy & security → Device encryption** or search for **Manage BitLocker**, then enable encryption for the data drive containing KazeVault. Save the recovery key separately. BitLocker protects the drive at rest; it does not protect data while the server is running.
 
+## Phase 4: mobile, password vault, and files
+
+The interface is mobile-first, has a viewport-safe layout, touch-sized controls, and a responsive file grid. Use `/files` or the Files navigation item from Android. The LAN address must be reachable from the same trusted Wi-Fi network; Android browser rendering and media codec support vary by device.
+
+The Passwords section is separate from the KazeVault administrator password. On first use, initialize it with a separate master password of at least 12 characters. Website passwords and private notes use AES-256-GCM authenticated encryption. The encryption key is derived with scrypt (N=16384, r=8, p=1) from the master password and a unique stored salt, then held only in server memory while unlocked. The vault auto-locks after 15 minutes of inactivity by default; configure `KAZEVAULT_VAULT_IDLE_SECONDS` if needed. Forgetting the master password means encrypted credentials cannot be recovered. The password generator uses the operating system cryptographic random source.
+
+Files are stored under `data\attachments\`, never as SQLite BLOBs. Uploads stream in 1 MB chunks, accept ordinary and unknown file types, enforce `KAZEVAULT_MAX_UPLOAD_MB` (default 512 MB), reject unsafe filenames, and clean up interrupted temporary uploads. Archives are stored unchanged and never extracted. Images, audio, and video may open inline when the browser supports the media type; unsupported codecs remain downloadable. SVG, HTML, scripts, and archives are not treated as trusted application content.
+
+Encrypted credential fields remain encrypted inside backups. Restoring a backup does not recover the vault if its master password is forgotten. Password secrets are never included in ordinary listings or backup manifests.
+
 ## Optional startup
 
 Automatic startup is intentionally not configured. If you later choose it, create a Windows Task Scheduler task that runs `run.bat` at logon, with the task set to run only when you choose. To disable it, remove that task. Do not use LAN mode for startup unless you explicitly want LAN exposure.

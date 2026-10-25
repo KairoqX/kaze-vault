@@ -7,4 +7,5 @@ argon2-cffi==23.1.0
 itsdangerous==2.2.0
 httpx==0.28.1
 pytest==8.3.4
+cryptography==44.0.0
 
