@@ -1,5 +1,5 @@
 const CACHE = 'kazevault-static-v1';
-const STATIC = ['/static/style.css', '/static/manifest.webmanifest', '/static/icons/kazevault.svg'];
+const STATIC = ['/static/style.css', '/static/responsive.css', '/static/manifest.webmanifest', '/static/icons/favicon.svg', '/static/icons/favicon-192x192.png', '/static/icons/favicon-512x512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(STATIC)).then(() => self.skipWaiting()));
 });

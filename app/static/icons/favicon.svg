@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180" viewBox="0 0 180 180" role="img" aria-labelledby="title desc">
+  <title id="title">KazeVault</title>
+  <desc id="desc">A geometric K monogram carried by a flowing wind curve.</desc>
+  <rect width="180" height="180" rx="42" fill="#0d1114"/>
+  <path d="M29 121c18 20 49 29 82 17 25-9 40-25 42-43 2-15-6-27-20-31" fill="none" stroke="#64b8cc" stroke-width="9" stroke-linecap="round"/>
+  <path d="M51 43h24v38l39-38h30L99 86l47 51h-31L75 98v39H51z" fill="#f2f5f7"/>
+  <path d="M127 42c9 4 16 10 21 18" fill="none" stroke="#64b8cc" stroke-width="7" stroke-linecap="round"/>
+</svg>
