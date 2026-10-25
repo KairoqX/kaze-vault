@@ -1,1 +1,32 @@
-{% extends 'base.html' %}{% block content %}<header><div><div class="eyebrow">COLLECTION</div><h1>{% if kind %}{{kind|title}}{% else %}All records{% endif %}</h1><p class="muted">{{items|length}} shown{% if q %} for “{{q}}”{% endif %}</p></div><a class="button primary" href="/records/new{% if kind %}?kind={{kind}}{% endif %}">+ New</a></header><form class="search" action="/records"><input name="q" value="{{q}}" placeholder="Search title, content, tags..."><input type="hidden" name="kind" value="{{kind}}"><button>Search</button></form><section class="card">{% for r in items %}<div class="row"><span class="kind">{{r.kind}}</span><a class="title" href="/records/{{r.id}}/edit">{{r.title}}</a>{% if r.favorite %}<span>★</span>{% endif %}<span class="tag">{{r.category or 'uncategorized'}}</span><a href="/records/{{r.id}}/edit">Edit</a></div>{% else %}<div class="empty">Nothing here yet.</div>{% endfor %}</section>{% endblock %}
+{% extends 'base.html' %}
+{% from '_ui.html' import icon %}
+{% block title %}{% if kind %}{{kind|title}}{% else %}Records{% endif %} · KazeVault{% endblock %}
+{% block content %}
+<header>
+  <div>
+    <h1>{% if kind %}{{kind|title}}{% else %}All records{% endif %}</h1>
+    <p class="muted">{{items|length}} shown{% if q %} for “{{q}}”{% endif %}</p>
+  </div>
+  <a class="button primary" href="/records/new{% if kind %}?kind={{kind}}{% endif %}">{{ icon('plus','sm') }}New</a>
+</header>
+
+<form class="search" action="/records">
+  <input name="q" value="{{q}}" placeholder="Search title, content, tags…" aria-label="Search records">
+  <input type="hidden" name="kind" value="{{kind}}">
+  <button>{{ icon('search','sm') }}Search</button>
+</form>
+
+<section class="card">
+  {% for r in items %}
+  <div class="row">
+    <span class="kind" data-kind="{{r.kind}}">{{r.kind}}</span>
+    <span class="row-main">
+      <a class="title" href="/records/{{r.id}}/edit">{{r.title}}</a>
+      <span class="row-meta">{{r.category or 'Uncategorized'}}</span>
+    </span>
+    {% if r.favorite %}<span class="star" title="Favorite">{{ icon('star','sm') }}</span>{% endif %}
+    <a class="button link" href="/records/{{r.id}}/edit">Edit</a>
+  </div>
+  {% else %}<div class="empty">Nothing here yet.</div>{% endfor %}
+</section>
+{% endblock %}

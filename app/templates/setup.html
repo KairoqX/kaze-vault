@@ -1,1 +1,20 @@
-{% extends 'base.html' %}{% block content %}<div class="center"><div class="card auth"><div class="eyebrow">FIRST-RUN SETUP</div><h1>Create your vault.</h1><p class="muted">This account will be the only administrator. Choose a strong password of at least 10 characters.</p>{% if error %}<div class="error">{{error}}</div>{% endif %}<form method="post"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><label>Username<input name="username" minlength="3" required autofocus></label><label>Password<input name="password" type="password" minlength="10" required></label><label>Confirm password<input name="confirm" type="password" required></label><button class="primary">Create administrator</button></form></div></div>{% endblock %}
+{% extends 'base.html' %}
+{% from '_ui.html' import icon %}
+{% block title %}Set up · KazeVault{% endblock %}
+{% block content %}
+<div class="center">
+  <div class="card auth">
+    <div class="auth-logo"><img src="/static/icons/kazevault.svg" alt=""><span class="wordmark">Kaze<span>Vault</span></span></div>
+    <h1>Create your vault</h1>
+    <p class="muted">This account will be the only administrator. Choose a strong password of at least 10 characters.</p>
+    {% if error %}<div class="error" role="alert">{{ icon('alert','sm') }}<span>{{error}}</span></div>{% endif %}
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{csrf_token}}">
+      <label>Username<input name="username" minlength="3" autocomplete="username" required autofocus></label>
+      <label>Password<input name="password" type="password" minlength="10" autocomplete="new-password" required></label>
+      <label>Confirm password<input name="confirm" type="password" autocomplete="new-password" required></label>
+      <button class="primary">Create administrator</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

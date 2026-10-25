@@ -1,3 +1,107 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#101112"><meta name="mobile-web-app-capable" content="yes"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/static/icons/kazevault.svg" type="image/svg+xml"><title>KazeVault</title><link rel="stylesheet" href="/static/style.css"></head>
-<body><div class="shell"><aside><a class="brand" href="/">Kaze<span>Vault</span></a><nav aria-label="Main navigation"><a href="/">◈ Dashboard</a><a href="/records">▦ All Records</a><a href="/records/new?kind=note">✎ Notes</a><a href="/records/new?kind=journal">◷ Journal</a><a href="/documents">▣ Files</a><a class="ai-nav" href="/ai"><img src="/static/icons/kazevault-ai.svg" alt=""> AI Chat</a><a href="/media">▶ Media</a><a href="/passwords">⚿ Passwords</a><a href="/records?kind=knowledge">⌘ Knowledge Base</a><a href="/search">⌕ Search</a><a href="/backups">↥ Backups</a><a href="/system">◉ System</a></nav>{% if request.session.get('uid') %}<form method="post" action="/logout" class="logout"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><button>Sign out</button></form>{% endif %}</aside><main><div id="connection-status" class="connection" role="status" aria-live="polite">KazeVault server is currently unavailable. Your private data is not being replaced or queued. Check the laptop and retry.</div>{% block content %}{% endblock %}</main></div><script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}async function checkConnection(){const el=document.getElementById('connection-status');try{const r=await fetch('/health',{cache:'no-store'});if(!r.ok)throw new Error();el.style.display='none';}catch(e){el.style.display='block';}}checkConnection();</script></body></html>
+{% from '_ui.html' import icon, sprite %}
+{% set authed = request.session.get('uid') %}
+{% set path = request.url.path %}
+{% set kind_q = request.query_params.get('kind', '') %}
+{% set in_records = path.startswith('/records') %}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#10161a" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/static/icons/kazevault.svg" type="image/svg+xml">
+<title>{% block title %}KazeVault{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css?v=3">
+</head>
+<body class="{% if not authed %}bare {% endif %}{% block bodyclass %}{% endblock %}">
+{{ sprite() }}
+<a class="skip-link" href="#content">Skip to content</a>
+
+{% if authed %}
+<header class="topbar">
+  <a class="brand" href="/"><img src="/static/icons/kazevault.svg" alt=""><span class="wordmark">Kaze<span>Vault</span></span></a>
+  <a class="icon-btn" href="/search" aria-label="Search">{{ icon('search') }}</a>
+</header>
+{% endif %}
+
+<div class="shell">
+{% if authed %}
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="/"><img src="/static/icons/kazevault.svg" alt=""><span class="wordmark">Kaze<span>Vault</span></span></a>
+    <nav class="nav" aria-label="Main navigation">
+      <div class="nav-group">
+        <a href="/" {% if path == '/' %}aria-current="page"{% endif %}>{{ icon('home') }}Dashboard</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Library</div>
+        <a href="/records" {% if in_records and kind_q not in ('note','journal','knowledge') %}aria-current="page"{% endif %}>{{ icon('records') }}All records</a>
+        <a href="/records/new?kind=note" {% if in_records and kind_q == 'note' %}aria-current="page"{% endif %}>{{ icon('note') }}Notes</a>
+        <a href="/records/new?kind=journal" {% if in_records and kind_q == 'journal' %}aria-current="page"{% endif %}>{{ icon('journal') }}Journal</a>
+        <a href="/records?kind=knowledge" {% if in_records and kind_q == 'knowledge' %}aria-current="page"{% endif %}>{{ icon('knowledge') }}Knowledge base</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Files</div>
+        <a href="/documents" {% if path.startswith('/documents') or path.startswith('/files') %}aria-current="page"{% endif %}>{{ icon('folder') }}Files</a>
+        <a href="/media" {% if path.startswith('/media') %}aria-current="page"{% endif %}>{{ icon('media') }}Media</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Tools</div>
+        <a class="ai-nav" href="/ai" {% if path.startswith('/ai') %}aria-current="page"{% endif %}>{{ icon('ai') }}AI chat</a>
+        <a href="/passwords" {% if path.startswith('/passwords') %}aria-current="page"{% endif %}>{{ icon('key') }}Passwords</a>
+        <a href="/search" {% if path.startswith('/search') %}aria-current="page"{% endif %}>{{ icon('search') }}Search</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Vault</div>
+        <a href="/backups" {% if path.startswith('/backups') %}aria-current="page"{% endif %}>{{ icon('shield') }}Backups</a>
+        <a href="/system" {% if path.startswith('/system') %}aria-current="page"{% endif %}>{{ icon('activity') }}System</a>
+      </div>
+    </nav>
+    <form method="post" action="/logout" class="logout">
+      <input type="hidden" name="csrf_token" value="{{csrf_token}}">
+      <button class="nav-btn">{{ icon('logout') }}Sign out</button>
+    </form>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+{% endif %}
+
+  <main id="content">
+    <div id="connection-status" class="connection" role="status" aria-live="polite">{{ icon('wifi') }}<span>KazeVault server is currently unavailable. Your private data is not being replaced or queued. Check the laptop and retry.</span></div>
+    <div class="page">{% block content %}{% endblock %}</div>
+  </main>
+</div>
+
+{% if authed %}
+<nav class="tabbar" aria-label="Primary">
+  <a href="/" {% if path == '/' %}aria-current="page"{% endif %}>{{ icon('home') }}<span>Home</span></a>
+  <a href="/records" {% if in_records %}aria-current="page"{% endif %}>{{ icon('records') }}<span>Records</span></a>
+  <a href="/documents" {% if path.startswith('/documents') or path.startswith('/files') or path.startswith('/media') %}aria-current="page"{% endif %}>{{ icon('folder') }}<span>Files</span></a>
+  <a href="/ai" {% if path.startswith('/ai') %}aria-current="page"{% endif %}>{{ icon('ai') }}<span>AI</span></a>
+  <button type="button" data-nav-toggle aria-controls="sidebar" aria-expanded="false">{{ icon('menu') }}<span>More</span></button>
+</nav>
+{% endif %}
+
+<script>
+if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}
+async function checkConnection(){const el=document.getElementById('connection-status');try{const r=await fetch('/health',{cache:'no-store'});if(!r.ok)throw new Error();el.style.display='none';}catch(e){el.style.display='flex';}}
+checkConnection();
+(function(){
+  const sb=document.getElementById('sidebar'),sc=document.getElementById('scrim');
+  if(!sb||!sc)return;
+  const toggles=document.querySelectorAll('[data-nav-toggle]');
+  function setNav(open){
+    sb.classList.toggle('open',open);sc.classList.toggle('show',open);
+    document.body.classList.toggle('nav-open',open);
+    toggles.forEach(b=>b.setAttribute('aria-expanded',String(open)));
+  }
+  toggles.forEach(b=>b.addEventListener('click',()=>setNav(!sb.classList.contains('open'))));
+  sc.addEventListener('click',()=>setNav(false));
+  sb.querySelectorAll('a').forEach(a=>a.addEventListener('click',()=>setNav(false)));
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')setNav(false)});
+})();
+</script>
+</body>
+</html>

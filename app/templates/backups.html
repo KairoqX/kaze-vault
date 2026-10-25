@@ -1,1 +1,47 @@
-{% extends 'base.html' %}{% block content %}<header><div><div class="eyebrow">DATA SAFETY</div><h1>Backups</h1><p class="muted">{{(storage/1024/1024)|round(2)}} MB stored locally · conservative deletion protection enabled.</p></div><form method="post" action="/backup"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><button class="primary">Create backup</button></form></header>{% if flash %}<div class="error">{{flash}}</div>{% endif %}<section class="card">{% for i in items %}<div class="row"><span class="kind">{{'VERIFIED' if i.ok else 'INVALID'}}</span><span class="title">{{i.name}}</span><span class="muted">{{(i.size/1024)|round(1)}} KB · {{i.created_at}} · {{i.attachments}} files{% if i.error %} · {{i.error}}{% endif %}</span><a href="/backups/{{i.name}}/download">Download</a><form method="post" action="/backups/{{i.name}}/verify"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><button class="link">Verify</button></form><form method="post" action="/backups/{{i.name}}/delete" onsubmit="return confirm('Delete this backup permanently?')"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><button class="link danger-text">Delete</button></form><form method="post" action="/backups/{{i.name}}/restore" onsubmit="return confirm('This replaces current data. Continue?')"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><input name="confirm" placeholder="Type RESTORE" required><button class="link">Restore</button></form></div>{% else %}<div class="empty">No backups created yet.</div>{% endfor %}</section><p class="muted">Restore first validates the manifest, database integrity, attachment hashes, and archive paths. It creates a verified pre-restore backup and may require a server restart. Never rely only on backups stored on this same SSD.</p>{% endblock %}
+{% extends 'base.html' %}
+{% from '_ui.html' import icon, filesize %}
+{% block title %}Backups · KazeVault{% endblock %}
+{% block content %}
+<header>
+  <div>
+    <h1>Backups</h1>
+    <p class="muted">{{(storage/1024/1024)|round(2)}} MB stored locally · conservative deletion protection enabled.</p>
+  </div>
+  <form method="post" action="/backup">
+    <input type="hidden" name="csrf_token" value="{{csrf_token}}">
+    <button class="primary">{{ icon('plus','sm') }}Create backup</button>
+  </form>
+</header>
+
+{% if flash %}<div class="alert" role="status">{{ icon('info','sm') }}<span>{{flash}}</span></div>{% endif %}
+
+<section class="card">
+  {% for i in items %}
+  <div class="row backup-row">
+    <span class="kind {{'ok' if i.ok else 'bad'}}">{{'Verified' if i.ok else 'Invalid'}}</span>
+    <span class="row-main">
+      <span class="row-title">{{i.name}}</span>
+      <span class="row-meta">{{ filesize(i.size) }} · {{i.created_at}} · {{i.attachments}} files{% if i.error %} · {{i.error}}{% endif %}</span>
+    </span>
+    <div class="row-actions">
+      <a class="button link" href="/backups/{{i.name}}/download">{{ icon('download','sm') }}Download</a>
+      <form method="post" action="/backups/{{i.name}}/verify">
+        <input type="hidden" name="csrf_token" value="{{csrf_token}}">
+        <button class="link">Verify</button>
+      </form>
+      <form method="post" action="/backups/{{i.name}}/delete" onsubmit="return confirm('Delete this backup permanently?')">
+        <input type="hidden" name="csrf_token" value="{{csrf_token}}">
+        <button class="link danger-text">Delete</button>
+      </form>
+    </div>
+    <form class="restore-form" method="post" action="/backups/{{i.name}}/restore" onsubmit="return confirm('This replaces current data. Continue?')">
+      <input type="hidden" name="csrf_token" value="{{csrf_token}}">
+      <input name="confirm" placeholder="Type RESTORE to enable restore" autocomplete="off" aria-label="Type RESTORE to confirm" required>
+      <button class="danger">{{ icon('refresh','sm') }}Restore</button>
+    </form>
+  </div>
+  {% else %}<div class="empty">No backups created yet.</div>{% endfor %}
+</section>
+
+<div class="note">{{ icon('shield') }}<p>Restore first validates the manifest, database integrity, attachment hashes, and archive paths. It creates a verified pre-restore backup and may require a server restart. Never rely only on backups stored on this same SSD.</p></div>
+{% endblock %}

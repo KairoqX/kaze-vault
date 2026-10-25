@@ -1,6 +1,59 @@
-{% extends 'base.html' %}{% block content %}
-<header><div><div class="eyebrow">OVERVIEW</div><h1>Your vault.</h1><p class="muted">A calm, private home for the things worth keeping.</p></div><a class="button primary" href="/records/new">+ New record</a></header>
-<section class="card network-card"><div><div class="eyebrow">CONNECTION</div><strong>{{network.mode_label}}</strong><p class="muted">{% if network.public_url %}<a href="{{network.public_url}}">{{network.public_url}}</a>{% elif network.mode=='local' %}http://127.0.0.1:8765{% else %}No address published. Use your trusted device network address.{% endif %}</p></div><span class="kind">{% if network.https %}HTTPS{% else %}HTTP{% endif %}</span></section>
-<a class="card ai-banner" href="/ai"><div><div class="eyebrow">PRIVATE AI HUB</div><h2>Run your local GGUF models</h2><p class="muted">Open the model library and chat through the authenticated KazeVault interface.</p></div><span class="button primary">Open AI Hub</span></a>
-<form class="search" action="/search"><input name="q" placeholder="Search your vault..."><button>Search</button></form><section class="stats"><div class="card stat"><span>Total records</span><strong>{{counts.values()|sum}}</strong></div><div class="card stat"><span>Notes</span><strong>{{counts.note}}</strong></div><div class="card stat"><span>Journal entries</span><strong>{{counts.journal}}</strong></div><div class="card stat"><span>Knowledge</span><strong>{{counts.knowledge}}</strong></div></section><div class="grid"><section class="card"><div class="section-title"><h2>Recently edited</h2><a href="/records">View all</a></div>{% for r in recent %}<a class="row" href="/records/{{r.id}}/edit"><span class="kind">{{r.kind}}</span><span>{{r.title}}</span><time>{{r.updated_at.strftime('%d %b')}}</time></a>{% else %}<div class="empty">Your vault is ready. Create your first record.</div>{% endfor %}</section><section class="card"><div class="section-title"><h2>Categories</h2></div>{% for c,n in cats %}<div class="category"><span>{{c}}</span><b>{{n}}</b></div>{% else %}<div class="empty">Categories will appear as you organize.</div>{% endfor %}</section></div>
+{% extends 'base.html' %}
+{% from '_ui.html' import icon %}
+{% block title %}Dashboard · KazeVault{% endblock %}
+{% block content %}
+<header>
+  <div>
+    <h1>Your vault</h1>
+    <p class="muted">A calm, private home for the things worth keeping.</p>
+  </div>
+  <a class="button primary" href="/records/new">{{ icon('plus','sm') }}New record</a>
+</header>
+
+<form class="search dash-search" action="/search">
+  <input name="q" placeholder="Search your vault…" aria-label="Search your vault">
+  <button>{{ icon('search','sm') }}Search</button>
+</form>
+
+<section class="stats" aria-label="Totals">
+  <div class="card stat"><span>Total records</span><strong>{{counts.values()|sum}}</strong></div>
+  <div class="card stat"><span>Notes</span><strong>{{counts.note}}</strong></div>
+  <div class="card stat"><span>Journal entries</span><strong>{{counts.journal}}</strong></div>
+  <div class="card stat"><span>Knowledge</span><strong>{{counts.knowledge}}</strong></div>
+</section>
+
+<div class="grid">
+  <section class="card">
+    <div class="section-title"><h2>Recently edited</h2><a href="/records">View all</a></div>
+    {% for r in recent %}
+    <a class="row" href="/records/{{r.id}}/edit">
+      <span class="kind" data-kind="{{r.kind}}">{{r.kind}}</span>
+      <span class="row-main"><span class="row-title">{{r.title}}</span></span>
+      <time>{{r.updated_at.strftime('%d %b')}}</time>
+    </a>
+    {% else %}<div class="empty">Your vault is ready. Create your first record.</div>{% endfor %}
+  </section>
+  <section class="card">
+    <div class="section-title"><h2>Categories</h2></div>
+    {% for c,n in cats %}<div class="category"><span>{{c}}</span><b>{{n}}</b></div>
+    {% else %}<div class="empty">Categories will appear as you organize.</div>{% endfor %}
+  </section>
+</div>
+
+<div class="grid even">
+  <a class="card panel-link" href="/ai">
+    <div>
+      <h2>Private AI hub</h2>
+      <p class="muted">Run your local GGUF models and chat without anything leaving this machine.</p>
+    </div>
+    <span class="button primary">Open AI hub</span>
+  </a>
+  <section class="card network-card">
+    <div>
+      <h2>{{network.mode_label}}</h2>
+      <p class="muted">{% if network.public_url %}<a href="{{network.public_url}}">{{network.public_url}}</a>{% elif network.mode=='local' %}http://127.0.0.1:8765{% else %}No address published. Use your trusted device network address.{% endif %}</p>
+    </div>
+    <span class="kind {% if network.https %}ok{% else %}plain{% endif %}">{% if network.https %}HTTPS{% else %}HTTP{% endif %}</span>
+  </section>
+</div>
 {% endblock %}

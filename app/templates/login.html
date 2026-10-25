@@ -1,1 +1,20 @@
-{% extends 'base.html' %}{% block content %}<div class="center"><div class="card auth"><div class="eyebrow">PRIVATE PERSONAL DATABASE</div><h1>Welcome back.</h1><p class="muted">Sign in to your private vault.</p>{% if error %}<div class="error">{{error}}</div>{% endif %}<form method="post"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><label>Username<input name="username" required autofocus></label><label>Password<input name="password" type="password" required></label><button class="primary">Sign in</button></form>{% if setup_needed %}<p class="muted">First time here? <a href="/setup">Create administrator account</a></p>{% endif %}</div></div>{% endblock %}
+{% extends 'base.html' %}
+{% from '_ui.html' import icon %}
+{% block title %}Sign in · KazeVault{% endblock %}
+{% block content %}
+<div class="center">
+  <div class="card auth">
+    <div class="auth-logo"><img src="/static/icons/kazevault.svg" alt=""><span class="wordmark">Kaze<span>Vault</span></span></div>
+    <h1>Welcome back</h1>
+    <p class="muted">Sign in to your private vault.</p>
+    {% if error %}<div class="error" role="alert">{{ icon('alert','sm') }}<span>{{error}}</span></div>{% endif %}
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{csrf_token}}">
+      <label>Username<input name="username" autocomplete="username" required autofocus></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="primary">Sign in</button>
+    </form>
+    {% if setup_needed %}<p class="muted">First time here? <a href="/setup">Create administrator account</a></p>{% endif %}
+  </div>
+</div>
+{% endblock %}

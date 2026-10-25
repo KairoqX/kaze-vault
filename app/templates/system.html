@@ -1,1 +1,34 @@
-{% extends 'base.html' %}{% block content %}<header><div><div class="eyebrow">ADMIN DIAGNOSTICS</div><h1>System status</h1><p class="muted">Read-only checks. Nothing is repaired or deleted automatically.</p></div></header><section class="stats"><div class="card stat"><span>Database</span><strong>{{integrity}}</strong><small>{{(db_size/1024)|round(1)}} KB</small></div><div class="card stat"><span>Free storage</span><strong>{{(disk.free/1024/1024/1024)|round(1)}} GB</strong><small>of {{(disk.total/1024/1024/1024)|round(1)}} GB</small></div><div class="card stat"><span>Attachments</span><strong>{{(attachment_size/1024/1024)|round(1)}} MB</strong></div><div class="card stat"><span>Last verified backup</span><strong>{{last_verified}}</strong></div></section>{% if db_error %}<div class="error">Database check failed: {{db_error}}</div>{% endif %}<section class="grid"><section class="card"><h2>Attachment integrity</h2><p class="muted">Missing metadata files: {{missing|length}} · Orphaned disk files: {{orphaned|length}}</p>{% if missing %}<p class="error">Missing: {{missing|join(', ')}}</p>{% endif %}{% if orphaned %}<p class="error">Orphaned: {{orphaned|join(', ')}}</p>{% endif %}{% if not missing and not orphaned %}<div class="empty">No inconsistencies found.</div>{% endif %}</section><section class="card"><h2>Configured paths</h2><p class="muted">Data: {{data_path|default('configured data partition')}}<br>Attachments and backups remain private and are not public static files.</p></section></section>{% endblock %}
+{% extends 'base.html' %}
+{% from '_ui.html' import icon %}
+{% block title %}System · KazeVault{% endblock %}
+{% block content %}
+<header>
+  <div>
+    <h1>System status</h1>
+    <p class="muted">Read-only checks. Nothing is repaired or deleted automatically.</p>
+  </div>
+</header>
+
+<section class="stats" aria-label="Status">
+  <div class="card stat"><span>Database</span><strong class="{{ 'ok' if integrity|string|lower == 'ok' else '' }}">{{integrity}}</strong><small>{{(db_size/1024)|round(1)}} KB</small></div>
+  <div class="card stat"><span>Free storage</span><strong>{{(disk.free/1024/1024/1024)|round(1)}} GB</strong><small>of {{(disk.total/1024/1024/1024)|round(1)}} GB</small></div>
+  <div class="card stat"><span>Attachments</span><strong>{{(attachment_size/1024/1024)|round(1)}} MB</strong></div>
+  <div class="card stat"><span>Last verified backup</span><strong>{{last_verified}}</strong></div>
+</section>
+
+{% if db_error %}<div class="error" role="alert">{{ icon('alert','sm') }}<span>Database check failed: {{db_error}}</span></div>{% endif %}
+
+<section class="grid even">
+  <section class="card">
+    <h2>Attachment integrity</h2>
+    <p class="muted">Missing metadata files: {{missing|length}} · Orphaned disk files: {{orphaned|length}}</p>
+    {% if missing %}<p class="error">Missing: {{missing|join(', ')}}</p>{% endif %}
+    {% if orphaned %}<p class="error">Orphaned: {{orphaned|join(', ')}}</p>{% endif %}
+    {% if not missing and not orphaned %}<div class="empty">No inconsistencies found.</div>{% endif %}
+  </section>
+  <section class="card">
+    <h2>Configured paths</h2>
+    <p class="muted">Data: {{data_path|default('configured data partition')}}<br>Attachments and backups remain private and are not public static files.</p>
+  </section>
+</section>
+{% endblock %}
