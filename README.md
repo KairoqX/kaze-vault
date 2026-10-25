@@ -79,6 +79,14 @@ Files now have a searchable/sortable explorer at `/files`, a dedicated media lib
 
 Multi-file bulk operations, virtual folders, and automatic thumbnail generation are intentionally not enabled yet. Use the existing upload control for individual files and the explicit delete controls for cleanup. The application still requires a restart after source updates and after restores. Mobile layouts were checked through automated route/template tests and responsive CSS; no physical Android device test was performed.
 
+## Phase 6: Android PWA installation
+
+KazeVault includes a web app manifest and a minimal service worker. On Android Chrome or another supported Chromium browser, open KazeVault, use the browser menu, and choose **Install app** or **Add to Home screen**. The app remains dependent on the laptop server for all private data.
+
+Installation and service-worker behavior generally require a secure context: `https://...` or `http://localhost`. Ordinary `http://10.x.x.x:8765` LAN access is not a secure context for these features. The safest simple LAN approach is to keep KazeVault local-only unless you already operate a trusted HTTPS reverse proxy with a certificate trusted by your devices. KazeVault does not generate certificates, expose ports publicly, or configure router forwarding.
+
+Only non-sensitive static assets are cached: CSS, the manifest, and the app icon. Private pages, records, journals, passwords, CSRF tokens, session cookies, attachments, media, health responses, and API responses are never cached or synchronized. If the laptop is offline, the installed shell may open but private data is unavailable; use the displayed connection warning. Update KazeVault by stopping it, replacing the application files, and restarting; the service worker version changes when its cache name changes. Remove the PWA from Android's app info or home-screen menu.
+
 ## Optional startup
 
 Automatic startup is intentionally not configured. If you later choose it, create a Windows Task Scheduler task that runs `run.bat` at logon, with the task set to run only when you choose. To disable it, remove that task. Do not use LAN mode for startup unless you explicitly want LAN exposure.

@@ -40,6 +40,10 @@ SESSION_SECRET=os.getenv('KAZEVAULT_SESSION_SECRET') or secrets.token_urlsafe(48
 app=FastAPI(title='KazeVault'); app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, max_age=28800, same_site='lax', https_only=os.getenv('KAZEVAULT_HTTPS','0')=='1')
 templates=Jinja2Templates(directory=str(ROOT/'app/templates'))
 app.mount('/static', StaticFiles(directory=str(ROOT/'app/static')), name='static')
+@app.get('/manifest.webmanifest')
+def manifest(): return FileResponse(ROOT/'app/static/manifest.webmanifest', media_type='application/manifest+json')
+@app.get('/sw.js')
+def service_worker(): return FileResponse(ROOT/'app/static/sw.js', media_type='application/javascript', headers={'Service-Worker-Allowed':'/'})
 MAX_UPLOAD=25*1024*1024; ALLOWED={'pdf','txt','md','png','jpg','jpeg','gif','webp','docx','xlsx','csv'}; LOGIN_WINDOW=300; LOGIN_MAX=5
 BACKUP_FORMAT='kazevault-backup-1'; MAX_BACKUP_ARCHIVE=2*1024*1024*1024
 MAX_UPLOAD=int(os.getenv('KAZEVAULT_MAX_UPLOAD_MB','512'))*1024*1024

@@ -102,3 +102,10 @@ def test_unified_search_media_range_and_system_report(app_client):
     media=client.get('/media'); assert media.status_code==200 and 'clip.mp4' in media.text
     download=client.get('/documents/1/download',headers={'Range':'bytes=0-3'}); assert download.status_code in (200,206)
     assert client.get('/system').status_code==200
+
+def test_pwa_manifest_and_safe_service_worker(app_client):
+    _, client=app_client
+    manifest=client.get('/manifest.webmanifest'); assert manifest.status_code==200
+    data=manifest.json(); assert data['display']=='standalone'; assert data['start_url']=='/'
+    worker=client.get('/sw.js'); assert worker.status_code==200
+    assert '/static/' in worker.text and '/health' not in worker.text and 'passwords' not in worker.text

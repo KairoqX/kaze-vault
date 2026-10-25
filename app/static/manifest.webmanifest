@@ -1,0 +1,14 @@
+{
+  "name": "KazeVault Private Database",
+  "short_name": "KazeVault",
+  "description": "A private, local-first personal database and file vault.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#101112",
+  "theme_color": "#101112",
+  "icons": [
+    {"src": "/static/icons/kazevault.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}
+  ]
+}
